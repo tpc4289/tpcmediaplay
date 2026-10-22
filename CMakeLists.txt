@@ -13,6 +13,7 @@ qt_add_executable(tmediaplay
     tmediaplay.cpp
     tmediaplay.h
     tmediaplay.ui
+    tdemux.h tdemux.cpp
 )
 target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 
@@ -20,11 +21,11 @@ target_link_libraries(tmediaplay
     PRIVATE
         Qt::Core
         Qt::Widgets
-        ${FFMPEG}/lib/avcodec.lib
-        ${FFMPEG}/lib/avformat.lib
-        ${FFMPEG}/lib/avutil.lib
-        ${FFMPEG}/lib/swresample.lib
-        ${FFMPEG}/lib/swscale.lib
+        ${FFMPEG_DIR}/lib/avcodec.lib
+        ${FFMPEG_DIR}/lib/avformat.lib
+        ${FFMPEG_DIR}/lib/avutil.lib
+        ${FFMPEG_DIR}/lib/swresample.lib
+        ${FFMPEG_DIR}/lib/swscale.lib
 )
 
 install(TARGETS tmediaplay
