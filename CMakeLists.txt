@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.19)
 project(tmediaplay LANGUAGES CXX)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets)
+SET (FFMPEG_DIR "D:/developSoft/ffmpeg-8.1.2-full_build-shared")
+
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
 
 qt_standard_project_setup()
 
@@ -12,11 +14,17 @@ qt_add_executable(tmediaplay
     tmediaplay.h
     tmediaplay.ui
 )
+target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 
 target_link_libraries(tmediaplay
     PRIVATE
         Qt::Core
         Qt::Widgets
+        ${FFMPEG}/lib/avcodec.lib
+        ${FFMPEG}/lib/avformat.lib
+        ${FFMPEG}/lib/avutil.lib
+        ${FFMPEG}/lib/swresample.lib
+        ${FFMPEG}/lib/swscale.lib
 )
 
 install(TARGETS tmediaplay
