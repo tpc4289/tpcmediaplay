@@ -18,6 +18,7 @@ qt_add_executable(tmediaplay
     tdemuxthread.h tdemuxthread.cpp
     tpacketqueue.h tpacketqueue.cpp
     tresample.h tresample.cpp
+    tdecode.h tdecode.cpp
 )
 target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 
