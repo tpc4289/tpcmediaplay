@@ -2,6 +2,8 @@
 #define TRESAMPLE_H
 
 struct AVFrame;
+struct SwrContext;
+struct AVCodecContext;
 class TResample
 {
 private:

@@ -1,5 +1,5 @@
 #include "tresample.h"
-
+#include <qDebug>
 extern "C"{
 #include <libswresample/swresample.h>
 #include <libavcodec/avcodec.h>
@@ -44,7 +44,7 @@ bool TResample::open(AVCodecContext *src, int dstRate, int dstChannels)
     }
 
     qDebug() << "TResample open ok:" << src->sample_rate << "->" << dstRate
-             << "ch" << srcCh.nb_channels << "->" << dstChannels;
+             << "ch" << srcChLayout.nb_channels << "->" << dstChannels;
     return true;
 }
 
