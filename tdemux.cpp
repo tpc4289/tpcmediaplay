@@ -8,6 +8,13 @@ extern "C"{
 static double r2d(AVRational r) {
     return r.den == 0 ? 0 : (double)r.num / (double)r.den;
 }
+//把以流 time_base 计的时间戳换算成毫秒；AV_NOPTS_VALUE 返回 -1
+static qint64 toMs(qint64 ts, AVRational ration){
+    if(ts == AV_NOPTS_VALUE || ration.num == 0 || ration.den == 0)
+        return -1;
+    static const AVRational ms = {1, 1000};
+    return av_rescale_q(ts, ration, ms);
+}
 
 TDemux::TDemux() {
 #if LIBAVFORMAT_VERSION_MAJOR < 58
@@ -21,7 +28,7 @@ TDemux::TDemux() {
 TDemux::~TDemux()
 {
     //对象销毁时候，关闭释放解封装上下文对象
-    close();
+    TDemux::close();
 }
 
 
@@ -94,7 +101,7 @@ bool TDemux::open(const char *url)
     v_fps = r2d(videoStream->avg_frame_rate);
     //视频总时长,v_totalMs初始值为0
     if(p_formatCtx->duration > 0){
-        v_totalMs = int(m_formatCtx->duration * 1000 / AV_TIME_BASE);
+        v_totalMs = int(p_formatCtx->duration * 1000 / AV_TIME_BASE);
     }
 
     qDebug()<<"videoStream.duration is： "<<videoStream->duration;
@@ -109,7 +116,7 @@ bool TDemux::open(const char *url)
     //输出一下我们的视频信息
     qDebug()<<"=========video information===========";
     qDebug()<<"video  width: "<<v_width;
-    qDebug()<<"video height: "<<v_width;
+    qDebug()<<"video height: "<<v_height;
     qDebug()<<"video    fps: "<<v_fps;
     return true;
 }
@@ -128,3 +135,136 @@ void TDemux::close()
     v_totalMs = 0;
     mux.unlock();
 }
+
+//读取视频信息，返回文件包，空间需要调用者释放：av_packet_free
+AVPacket *TDemux::read()
+{
+    mux.lock();
+    if(!p_formatCtx){
+        mux.unlock();
+        return NULL;
+    }
+    //为视频包变量初始化分配空间
+    AVPacket *pack = av_packet_alloc();
+    //从封装格式中读取一个压缩数据包的函数,结果存储在pack中
+    int ret = av_read_frame(p_formatCtx, pack);
+    //未正确获取信息
+    if(ret != 0){
+        //首先释放pack空间
+        av_packet_free(&pack);
+        //区分"文件读尽"与"网络抖动"，供解封装线程决定是否发 EOF 收尾
+        m_eof = (ret == AVERROR_EOF);
+        mux.unlock();
+        return NULL;
+    }
+    m_eof = false;
+
+    //pts/dts 统一转换为毫秒，便于后续音画同步；原写法用浮点乘法在大 time_base 下会溢出
+    int idx = pack->stream_index;
+    if (idx >= 0 && idx < (int)p_formatCtx->nb_streams) {
+        AVRational tb = p_formatCtx->streams[idx]->time_base;
+        pack->pts = toMs(pack->pts, tb);
+        pack->dts = toMs(pack->dts, tb);
+    }
+    mux.unlock();
+    return pack;
+}
+
+
+//获取视频参数，返回空间需要调用者释放 avcodec_parameters_free
+AVCodecParameters *TDemux::copyVideoPara()
+{
+    mux.lock();
+    //video_idx解封装的时候已经判断，这里再判断下是提示下
+    if(!p_formatCtx || video_idx <0){
+        mux.unlock();
+        return NULL;
+    }
+    //分配视频解码参数空间
+    AVCodecParameters *videoPara = avcodec_parameters_alloc();
+    //进行拷贝
+    int ret = avcodec_parameters_copy(videoPara, p_formatCtx->streams[video_idx]->codecpar);
+    //拷贝失败返回NULL;
+    if(ret < 0){
+        mux.unlock();
+        return NULL;
+    }
+    return videoPara;
+    mux.unlock();
+}
+
+
+//获取音频参数，返回空间需要调用者释放 avcodec_parameters_free
+AVCodecParameters *TDemux::copyAudioPara()
+{
+    mux.lock();
+    //video_idx解封装的时候已经判断，这里再判断下是提示下
+    if(!p_formatCtx || audio_idx <0){
+        mux.unlock();
+        return NULL;
+    }
+    //分配视频解码参数空间
+    AVCodecParameters *audioPara = avcodec_parameters_alloc();
+    //进行拷贝
+    int ret = avcodec_parameters_copy(audioPara, p_formatCtx->streams[audio_idx]->codecpar);
+    //拷贝失败返回NULL;
+    if(ret < 0){
+        mux.unlock();
+        return NULL;
+    }
+    return audioPara;
+    mux.unlock();
+}
+
+
+//seek位置 pos 0.0-1.0
+bool TDemux::seek(double pos)
+{
+    if (pos < 0) pos = 0;
+    if (pos > 1) pos = 1;
+    mux.lock();
+    //video_idx解封装的时候已经判断，这里再判断下是提示下
+    if(!p_formatCtx || video_idx <0){
+        mux.unlock();
+        return false;
+    }
+    //清理读取缓冲
+    avformat_flush(p_formatCtx);
+    //视频流
+    AVStream *videoStream = p_formatCtx->streams[video_idx];
+    qint64 ts;
+    if(videoStream->duration > 0 && videoStream->duration != AV_NOPTS_VALUE){
+        ts = qint64(videoStream->duration*pos);  //获取跳转点
+    }else{
+        qint64 us = (p_formatCtx->duration > 0) ? qint64(p_formatCtx->duration * pos) : 0;
+        ts = av_rescale_q(us, AV_TIME_BASE_Q, videoStream->time_base);
+    }
+    //AVSEEK_FLAG_FRAME 是按帧号定位，这里给的是时间戳，不能带该标志
+    int ret = av_seek_frame(p_formatCtx, video_idx, ts, AVSEEK_FLAG_BACKWARD);
+    mux.unlock();
+    return ret >= 0;
+}
+
+
+
+
+void TDemux::clear()
+{
+    mux.lock();
+    if (!p_formatCtx) {
+        mux.unlock();
+        return;
+    }
+    avformat_flush(p_formatCtx);
+    mux.unlock();
+}
+
+
+//判断是否是音频
+bool TDemux::isAudio(AVPacket *pack)
+{
+    if(!pack)
+        return false;
+     return pack->stream_index != video_idx;
+}
+

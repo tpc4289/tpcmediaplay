@@ -1,11 +1,16 @@
 #include "tmediaplay.h"
 #include "tdemux.h"
+#include "tdemuxthread.h"
 #include <QApplication>
 
 int main(int argc, char *argv[])
 {
-    TDemux demux;
-    demux.open("E:/jmds03e12.mp4");
+    // TDemux demux;
+    // demux.open("E:/jmds03e12.mp4");
+    // demux.open("G:/download/BitComet/ffxxz35.mp4");
+    TDemuxThread *demuxThread = new TDemuxThread();
+    demuxThread->openMedia("G:/download/BitComet/ffxxz35.mp4");
+    demuxThread->start();
     QApplication a(argc, argv);
     tmediaplay w;
     w.show();
