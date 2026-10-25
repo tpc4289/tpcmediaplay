@@ -38,13 +38,15 @@ public:
     //获取解码帧。返回的 frame 由调用者 av_frame_free；无帧返回 nullptr
     virtual AVFrame *recv();
 
+    //seek后调用，清理pending + 刷新解码器缓存
+    virtual void clear();
+
     //已打开的解码上下文（供重采样读取参数），未打开返回 nullptr
-    AVCodecContext *context();
+    AVCodecContext *codecContext();
 
     void setIsAudio(bool isAudio);
 
     virtual void close();
-    virtual void clear();
 
 
 

@@ -40,6 +40,8 @@ void tmediaplay::play(const QString &url)
         return;
     }
 
+    //videoDecode->send();
+
     //音频解码器
     AVCodecParameters *audioCodecPara = demux->copyAudioPara();
     //音频流可能为空，需要判断
@@ -50,5 +52,7 @@ void tmediaplay::play(const QString &url)
         if(!audioDecode->open(audioCodecPara))
             qDebug()<<"audio decoder open failed!";
     }
+
+
 
 }
