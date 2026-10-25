@@ -189,8 +189,9 @@ AVCodecParameters *TDemux::copyVideoPara()
         mux.unlock();
         return NULL;
     }
-    return videoPara;
     mux.unlock();
+    return videoPara;
+
 }
 
 
@@ -212,8 +213,9 @@ AVCodecParameters *TDemux::copyAudioPara()
         mux.unlock();
         return NULL;
     }
-    return audioPara;
     mux.unlock();
+    return audioPara;
+
 }
 
 
