@@ -3,6 +3,7 @@
 #include "tdemuxthread.h"
 #include "tdecode.h"
 #include "tvideowidget.h"
+#include "tvideothread.h"
 
 #include <QVBoxLayout>
 
@@ -61,6 +62,15 @@ void tmediaplay::play(const QString &url)
         if(!audioDecode->open(audioCodecPara))
             qDebug()<<"audio decoder open failed!";
     }
+
+    //视频解码显示
+    videoThread = new TVideoThread();
+    videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps());
+    connect(videoThread, &TVideoThread::frameReady, videoWidget, &TVideoWidget::slotRepaint);
+
+    videoThread->start();
+    demuxThread->start();
+
 
 
 

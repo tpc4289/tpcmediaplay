@@ -30,9 +30,11 @@ public:
     TDemux();
     ~TDemux();
     //获取媒体总时长(ms)，RTSP 等直播流为 0
-    int getTotalMs() const {return v_totalMs;};
+    int getTotalMs() const;
     //上一次 read() 是否读到文件尾（区分 EOF 与网络抖动）
-    bool getIsEndOf() const {return m_eof;};
+    bool getIsEndOf() const;
+    //获取fps
+    int getFps() const;
 
     //打开媒体文件，或者流媒体 rtmp http rtsp
     virtual bool open(const char *url);

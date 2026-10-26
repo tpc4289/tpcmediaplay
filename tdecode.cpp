@@ -163,6 +163,7 @@ AVFrame *TDecode::recv()
         av_frame_free(&frame);
         return nullptr;
     }
+    qDebug()<<"avcodec_receive_frame success!";
     return frame;
 }
 

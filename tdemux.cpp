@@ -1,7 +1,7 @@
 #include "tdemux.h"
 #include <QDebug>
 extern "C"{
-#include "libavformat/avformat.h"
+#include <libavformat/avformat.h>
 }
 
 //把ffmpeg内部的分数转换为浮点数
@@ -30,6 +30,12 @@ TDemux::~TDemux()
     //对象销毁时候，关闭释放解封装上下文对象
     TDemux::close();
 }
+
+int TDemux::getTotalMs() const {return v_totalMs;}
+
+bool TDemux::getIsEndOf() const {return m_eof;}
+
+int TDemux::getFps() const {return v_fps;}
 
 
 //解封装输入视频文件信息，获取到视频流和音频流信息

@@ -15,8 +15,9 @@ bool TVideoThread::frameToYuv(AVFrame *frame, int w, int h, QByteArray &out)
     if(w <=0 || h <= 0)
         return false;
 
-    int cw = (w + 1)/2;
-    int ch = (h + 1)/2;
+    // int cw = (w + 1)/2;
+    // int ch = (h + 1)/2;
+    int cw = w /2, ch = h / 2;
     //YUV中的Y大小
     int ySize = w * h;
     //YUV中的U和V大小

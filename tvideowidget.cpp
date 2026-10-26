@@ -55,6 +55,32 @@ const char *vexString = R"(
 //     );
 
 //在#verion后面移除precision mediump float;
+// const char *texString = R"(
+// #version 330 core
+// in vec2 textureOut;
+// uniform sampler2D tex_y;
+// uniform sampler2D tex_u;
+// uniform sampler2D tex_v;
+// out vec4 fragColor;
+// void main(void)
+// {
+//     vec3 yuv;
+//     yuv.x = texture(tex_y, textureOut).r - 16.0 / 255.0;
+//     yuv.y = texture(tex_u, textureOut).r - 0.5;
+//     yuv.z = texture(tex_v, textureOut).r - 0.5;
+
+//     const mat3 yuv2rgb = mat3(
+//         1.164, 1.164, 1.164,
+//         0.0,   -0.391, 2.017,
+//         1.596, -0.813, 0.0
+//     );
+//     vec3 rgb = yuv2rgb * yuv;
+//     fragColor = vec4(rgb, 1.0);
+// }
+// )";
+
+//但是 `sws_scale` 默认输出 **full range（0~255）** 的 YUV！
+//推荐，改 shader 适配 full range，sws 输出默认就是 full
 const char *texString = R"(
 #version 330 core
 in vec2 textureOut;
@@ -65,20 +91,19 @@ out vec4 fragColor;
 void main(void)
 {
     vec3 yuv;
-    yuv.x = texture(tex_y, textureOut).r - 16.0 / 255.0;
+    yuv.x = texture(tex_y, textureOut).r;
     yuv.y = texture(tex_u, textureOut).r - 0.5;
     yuv.z = texture(tex_v, textureOut).r - 0.5;
 
     const mat3 yuv2rgb = mat3(
-        1.164, 1.164, 1.164,
-        0.0,   -0.391, 2.017,
-        1.596, -0.813, 0.0
+        1.0,      1.0,      1.0,
+        0.0,     -0.34414,  1.772,
+        1.402,   -0.71414,  0.0
     );
     vec3 rgb = yuv2rgb * yuv;
     fragColor = vec4(rgb, 1.0);
 }
 )";
-
 TVideoWidget::TVideoWidget(QWidget *parent) : QOpenGLWidget(parent) {
 
 }
@@ -106,7 +131,8 @@ void TVideoWidget::paintGL()
     }
 
     //把最新帧从打包缓冲拆到三平面（swap 保证拷贝期间不被覆盖）
-    int cw = (videoWidth + 1) / 2, ch = (videoHeight + 1) / 2;
+    // int cw = (videoWidth + 1) / 2, ch = (videoHeight + 1) / 2;
+    int cw = videoWidth / 2, ch = videoHeight / 2;
     int ySize = videoWidth * videoHeight, uvSize = cw * ch;
     const uchar *src = (const uchar *)curData.constData();
     memcpy(datas[0], src, size_t(ySize));
@@ -204,7 +230,7 @@ void TVideoWidget::initializeGL()
     glEnableVertexAttribArray(A_VER);
 
     //glVertexAttribPointer(T_VER, 2, GL_FLOAT, 0, 0,(const void *)(8 * sizeof(GLfloat)));
-    glVertexAttribPointer(A_VER, 2, GL_FLOAT, GL_FALSE, 4*sizeof(GLfloat), (const void *)(2*sizeof(GLfloat)));
+    glVertexAttribPointer(T_VER, 2, GL_FLOAT, GL_FALSE, 4*sizeof(GLfloat), (const void *)(2*sizeof(GLfloat)));
     glEnableVertexAttribArray(T_VER);
 
     glBindBuffer(GL_ARRAY_BUFFER, 0);
@@ -227,8 +253,10 @@ void TVideoWidget::ensureTextures()
     }
     glGenTextures(3, texs);
     for(int i = 0; i < 3; i++){
-        int w = i ? (videoWidth + 1) / 2 : videoWidth;
-        int h = i ? (videoHeight + 1) / 2 : videoHeight;
+        // int w = i ? (videoWidth + 1) / 2 : videoWidth;
+        // int h = i ? (videoHeight + 1) / 2 : videoHeight;
+        int w = i ? videoWidth / 2 : videoWidth;
+        int h = i ? videoHeight / 2 : videoHeight;
         glActiveTexture(GL_TEXTURE0 + i);
         glBindTexture(GL_TEXTURE_2D, texs[i]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -266,8 +294,10 @@ void TVideoWidget::slotRepaint(QByteArray yuv, int width, int height)
         qDebug()<<"slotRepaint get bad frame: width is "<<width<<",height is "<<height<<", yuv size is "<<yuv.size();
         return;
     }
-    int cw = (width + 1) / 2;
-    int ch = (height + 1) / 2;
+    // int cw = (width + 1) / 2;
+    // int ch = (height + 1) / 2;
+    int cw = width / 2;
+    int ch = height / 2;
     int need = width * height + cw * ch * 2;
     if(yuv.size() < need){
         qDebug() << "slotRepaint data too small, yuv.size is "<< yuv.size() << ", need size is " << need;
