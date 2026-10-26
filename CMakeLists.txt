@@ -20,6 +20,7 @@ qt_add_executable(tmediaplay
     tresample.h tresample.cpp
     tdecode.h tdecode.cpp
     tvideowidget.h tvideowidget.cpp
+    tvideothread.h tvideothread.cpp
 )
 target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 
