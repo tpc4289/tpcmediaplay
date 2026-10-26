@@ -6,6 +6,7 @@
 
 class TDemuxThread;
 class TDecode;
+class TVideoWidget;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -21,6 +22,7 @@ private:
     TDemuxThread *demuxThread;
     TDecode *videoDecode;
     TDecode *audioDecode;
+    TVideoWidget *videoWidget;
 
 public:
     explicit tmediaplay(QWidget *parent = nullptr);

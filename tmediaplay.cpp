@@ -2,6 +2,9 @@
 #include "ui_tmediaplay.h"
 #include "tdemuxthread.h"
 #include "tdecode.h"
+#include "tvideowidget.h"
+
+#include <QVBoxLayout>
 
 tmediaplay::tmediaplay(QWidget *parent)
     : QWidget(parent)
@@ -10,6 +13,12 @@ tmediaplay::tmediaplay(QWidget *parent)
     ui->setupUi(this);
     setWindowTitle("tpcmediaplay播放器");
     resize(900,640);
+
+    videoWidget = new TVideoWidget(this);
+    QVBoxLayout *vBoxLay = new QVBoxLayout(this);
+    vBoxLay->addWidget(videoWidget);
+    setLayout(vBoxLay);
+
 
 }
 
