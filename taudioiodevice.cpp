@@ -14,7 +14,7 @@ TAudioIODevice::TAudioIODevice(QObject *parent)
 
 TAudioIODevice::~TAudioIODevice()
 {
-
+    clearBuffer();
 }
 //把重采样后的音频frame写入队列（内部 av_frame_ref 持有副本，调用方随后即可释放原帧）。满返回 false
 bool TAudioIODevice::pushQueue(AVFrame *frame)
@@ -40,11 +40,15 @@ bool TAudioIODevice::pushQueue(AVFrame *frame)
     }
     //写入队列末尾
     frame_queue.push_back(clone);
+
+    emit readyRead();
     return true;
 }
 
 qint64 TAudioIODevice::readData(char *data, qint64 maxlen)
 {
+
+    qDebug() << "readData maxlen:" << maxlen;
     if(maxlen <= 0)
         return 0;
 
@@ -54,11 +58,11 @@ qint64 TAudioIODevice::readData(char *data, qint64 maxlen)
         //队列为空，给0
         memset(data, 0, size_t(maxlen));
         frame_pos = 0;
-        return maxlen;
+        return 0;
     }
 
     qint64 total = 0;
-    while(total < maxlen){
+    while(total < maxlen && !frame_queue.empty()){
         //获取队列中的首元素
         AVFrame *f = frame_queue.front();
         int ch = f->ch_layout.nb_channels;
@@ -141,7 +145,13 @@ qint64 TAudioIODevice::bytesAvailable() const
             avail += frameBytes;
     }
 
-    return avail + QIODevice::bytesAvailable();
+    // return avail + QIODevice::bytesAvailable();
+    return 4096;
+}
+
+bool TAudioIODevice::isSequential() const
+{
+    return true;
 }
 
 //获取时钟总数
@@ -149,4 +159,9 @@ int64_t TAudioIODevice::getClock()
 {
     std::lock_guard<std::mutex> lock(mux);
     return clock;
+}
+
+qint64 TAudioIODevice::getBytesAvailable() const
+{
+    return bytesAvailable();
 }

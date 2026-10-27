@@ -21,6 +21,8 @@ public:
     bool pushQueue(AVFrame *frame);
     int64_t getClock();
 
+    qint64 getBytesAvailable() const;
+
 protected:
     //重载实现数据写类
     qint64 readData(char *data, qint64 maxlen) override;
@@ -31,6 +33,7 @@ protected:
     void clearBuffer();
     bool isEmpty();
     qint64 bytesAvailable() const override;
+    bool isSequential() const override;
 
 
 
@@ -47,7 +50,8 @@ private:
 
     static const int MAX_FRAMES = 60;   //约 1.3s（48k/1024 帧长），满则倒逼解码线程
 
-
+signals:
+    void readyRead();
 
 
 };

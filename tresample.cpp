@@ -7,6 +7,11 @@ extern "C"{
 
 TResample::TResample() {}
 
+TResample::~TResample()
+{
+
+}
+
 
 //src：解码上下文（取 sample_rate / ch_layout / sample_fmt）
 //dstRate、dstChannels：声卡目标格式参数

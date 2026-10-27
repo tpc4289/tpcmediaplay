@@ -74,8 +74,9 @@ void tmediaplay::play(const QString &url)
     audioThread = new TAudioThread();
     audioThread->init(audioDecode, demuxThread->getAudioPackQueue());
     qDebug() << "audio packet count is "<<demuxThread->getAudioPackQueue()->getCount();
-    audioThread->start();
     videoThread->start();
+    audioThread->start();
+
     demuxThread->start();
 
 
