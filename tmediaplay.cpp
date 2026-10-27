@@ -4,6 +4,7 @@
 #include "tdecode.h"
 #include "tvideowidget.h"
 #include "tvideothread.h"
+#include "taudiothread.h"
 
 #include <QVBoxLayout>
 
@@ -66,8 +67,14 @@ void tmediaplay::play(const QString &url)
     //视频解码显示
     videoThread = new TVideoThread();
     videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps());
+    qDebug() << "video packet count is "<<demuxThread->getVideoPackQueue()->getCount();
     connect(videoThread, &TVideoThread::frameReady, videoWidget, &TVideoWidget::slotRepaint);
 
+    //音频重采样播放线程
+    audioThread = new TAudioThread();
+    audioThread->init(audioDecode, demuxThread->getAudioPackQueue());
+    qDebug() << "audio packet count is "<<demuxThread->getAudioPackQueue()->getCount();
+    audioThread->start();
     videoThread->start();
     demuxThread->start();
 

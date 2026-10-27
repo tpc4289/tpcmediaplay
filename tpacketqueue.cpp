@@ -29,6 +29,7 @@ void TPacketQueue::push(TPacket *tp, std::unique_lock<std::mutex> &lk)
         return;
      // 2. 入队并累加 size
     packQueue.push(tp);
+    count += 1;
     qDebug()<<"packet push, the size is:"<<tp->pkt->size;
     if(tp->pkt)
         size += in_size;
@@ -47,6 +48,7 @@ bool TPacketQueue::pop(TPacket *&tp)
     tp = packQueue.front();
     //取出该pack
     packQueue.pop();
+    count -= 1;
     qDebug()<<"packet pop, the size is:"<<tp->pkt->size;
     if(tp->pkt)
         size -= tp->pkt->size;
@@ -66,6 +68,7 @@ void TPacketQueue::flush()
         delete tp;
     }
     size = 0;
+    count = 0;
     condNotFull.notify_all();
 }
 
@@ -75,4 +78,9 @@ void TPacketQueue::stop()
     isRunning = false;
     condNotEmpty.notify_all();
     condNotFull.notify_all();
+}
+
+int TPacketQueue::getCount()
+{
+    return count;
 }

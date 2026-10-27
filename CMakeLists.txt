@@ -4,7 +4,8 @@ project(tmediaplay LANGUAGES CXX)
 # SET (FFMPEG_DIR "D:/developSoft/ffmpeg-8.1.2-full_build-shared")
 SET (FFMPEG_DIR "E:/code/qt/lesson_code/ffmpeg")
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Multimedia)
 
 qt_standard_project_setup()
 
@@ -22,6 +23,7 @@ qt_add_executable(tmediaplay
     tvideowidget.h tvideowidget.cpp
     tvideothread.h tvideothread.cpp
     taudiothread.h taudiothread.cpp
+    taudioiodevice.h taudioiodevice.cpp
 )
 target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 
@@ -30,12 +32,14 @@ target_link_libraries(tmediaplay
         Qt::Core
         Qt::Widgets
         Qt::OpenGLWidgets
+        Qt::Multimedia
         ${FFMPEG_DIR}/lib/avcodec.lib
         ${FFMPEG_DIR}/lib/avformat.lib
         ${FFMPEG_DIR}/lib/avutil.lib
         ${FFMPEG_DIR}/lib/swresample.lib
         ${FFMPEG_DIR}/lib/swscale.lib
 )
+target_link_libraries(tmediaplay PRIVATE Qt6::Multimedia)
 
 install(TARGETS tmediaplay
     BUNDLE  DESTINATION .

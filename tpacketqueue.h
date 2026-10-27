@@ -25,6 +25,7 @@ private:
     std::condition_variable condNotEmpty;
     std::condition_variable condNotFull;
     int64_t size = 0;
+    int count = 0;//队列元素个数
     std::atomic<bool> isRunning{true};
 
 public:
@@ -40,6 +41,8 @@ public:
     virtual void flush();
     //停止：唤醒所有阻塞点，消费者将退出
     virtual void stop();
+    //获取队列元素个数
+    virtual int getCount();
     std::mutex mux;   //供外部（解封装线程）持锁调用 push
 
 };

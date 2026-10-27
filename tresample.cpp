@@ -43,6 +43,7 @@ bool TResample::open(AVCodecContext *src, int dstRate, int dstChannels)
         return false;
     }
 
+    av_channel_layout_uninit(&dstChLayout);       // ← 成功后也要释放
     qDebug() << "TResample open ok:" << src->sample_rate << "->" << dstRate
              << "ch" << srcChLayout.nb_channels << "->" << dstChannels;
     return true;
@@ -60,7 +61,7 @@ AVFrame *TResample::resample(AVFrame *frame)
     if(maxOutSamples <= 0)
         return nullptr;
     //目标帧：nb_samples 帧 * 通道 * 2 字节(s16)，由 av_frame_get_buffer 分配
-    int destNb = frame->nb_samples;
+    // int destNb = frame->nb_samples;
     //分配目标帧空间
     AVFrame *outFrame = av_frame_alloc();
     outFrame->format = AV_SAMPLE_FMT_S16;
@@ -74,22 +75,30 @@ AVFrame *TResample::resample(AVFrame *frame)
     int ret = av_frame_get_buffer(outFrame, 0);
     if(ret < 0){
         qDebug()<<"av_frame_get_buffer failed!";
+        av_channel_layout_uninit(&outFrame->ch_layout);
         av_frame_free(&outFrame);
         return nullptr;
     }
 
-    //原始帧的第一个平面的数据
-    const uint8_t *srcData[1] = {frame->data[0]};
-    //目标帧的第一个平面的数据
-    uint8_t *destData[1] = {outFrame->data[0]};
+    // //原始帧的第一个平面的数据
+    // const uint8_t *srcData[1] = {frame->data[0]};
+    // //目标帧的第一个平面的数据
+    // uint8_t *destData[1] = {outFrame->data[0]};
 
     //音频重采样函数，**成功返回本次转换得到的采样点数（per channel）**；负数 = AVERROR 错误
-    ret = swr_convert(swrCtx, destData, destNb,srcData, frame->nb_samples);
+    // ret = swr_convert(swrCtx, destData, destNb,srcData, frame->nb_samples);
+    ret = swr_convert(swrCtx, outFrame->data, outFrame->nb_samples,(const uint8_t **)frame->data, frame->nb_samples);
     //新版采样函数swr_convert_frame(SwrContext *swr, AVFrame *output, const AVFrame *input);
     if(ret < 0){
         char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
         av_strerror(ret, buf, sizeof(buf) - 1);
         qDebug() << "swr_convert failed:" << buf;
+        av_channel_layout_uninit(&outFrame->ch_layout);
+        av_frame_free(&outFrame);
+        return nullptr;
+    }else if(ret == 0){
+        // 内部缓冲延迟，无输出
+        av_channel_layout_uninit(&outFrame->ch_layout);
         av_frame_free(&outFrame);
         return nullptr;
     }
