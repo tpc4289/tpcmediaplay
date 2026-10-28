@@ -7,19 +7,94 @@
 #include "taudiothread.h"
 
 #include <QVBoxLayout>
+#include <QSlider>
+#include <QIcon>
+#include <QGroupBox>
+#include <QHBoxLayout>
 
 tmediaplay::tmediaplay(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::tmediaplay)
 {
     ui->setupUi(this);
+    //
     setWindowTitle("tpcmediaplay播放器");
     resize(900,640);
 
+
     videoWidget = new TVideoWidget(this);
-    QVBoxLayout *vBoxLay = new QVBoxLayout(this);
-    vBoxLay->addWidget(videoWidget);
-    setLayout(vBoxLay);
+    QGridLayout *gridLayout = new QGridLayout(this);
+    gridLayout->setContentsMargins(0,0,0,0);
+    gridLayout->setSpacing(0);
+    gridLayout->addWidget(videoWidget, 0, 0);
+
+
+    const QString sliderStyle = R"(
+        QSlider{
+                background-color: rgba(0,0,0,0);
+                height: 36px;
+                padding: 0px 15px;
+            }
+        QSlider::groove:horizontal{
+                height: 4px;
+                background: #555555;
+                border-radius: 2px;
+            }
+        QSlider::handle:horizontal{
+                width:12px;
+                height:12px;
+                margin:-4px 0;
+                background:#ffffff;
+                border-radius:6px;}
+        QSlider::sub-page:horizontal{
+            background:#2196F3;
+            border-radius:2px;})";
+
+    //进度条选项
+    seekSlider = new QSlider(Qt::Horizontal, this);
+    seekSlider->setRange(0,100);
+    seekSlider->setStyleSheet(sliderStyle);
+
+    QGroupBox *mediaGroupBox = new QGroupBox(this);
+    mediaGroupBox->setStyleSheet("QGroupBox{background-color: rgba(0,0,0,100);height:42px;width:200px;}");
+
+    QHBoxLayout *hBoxLayout1 = new QHBoxLayout();
+    //播放按钮
+    playBtn = new QPushButton(this);
+    playBtn->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStart));
+    stopBtn = new QPushButton(this);
+    stopBtn->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStop));
+    soundBtn = new QPushButton(this);
+
+    volumnSlider = new QSlider(Qt::Horizontal,this);
+
+    hBoxLayout1->addWidget(stopBtn);
+    hBoxLayout1->addWidget(playBtn);
+    hBoxLayout1->addWidget(soundBtn);
+    hBoxLayout1->addWidget(volumnSlider);
+
+
+    mediaGroupBox->setLayout(hBoxLayout1);
+
+
+
+
+
+    gridLayout->addWidget(mediaGroupBox, 0, 0,Qt::AlignBottom|Qt::AlignCenter);
+
+
+
+
+    // 第一行拉伸，GL控件自动放大填满窗口
+    gridLayout->setRowStretch(0, 1);
+
+    gridLayout->addWidget(seekSlider, 0, 0,Qt::AlignBottom);
+
+    setLayout(gridLayout);
+
+
+
+
 
 
 }

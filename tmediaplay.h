@@ -2,6 +2,8 @@
 #define TMEDIAPLAY_H
 
 #include <QWidget>
+#include <QSlider>
+#include <QPushButton>
 
 
 class TDemuxThread;
@@ -29,6 +31,14 @@ private:
     TVideoThread *videoThread  = nullptr;
     //音频线程重采样播放
     TAudioThread *audioThread  = nullptr;
+
+
+    //界面播放元素
+    QSlider *seekSlider = nullptr; //进度条
+    QPushButton *stopBtn = nullptr;//停止播放按钮
+    QPushButton *playBtn = nullptr;//播放按钮
+    QPushButton *soundBtn = nullptr;//静音/打开按钮
+    QSlider *volumnSlider = nullptr;//音量大小拖动条
 
 public:
     explicit tmediaplay(QWidget *parent = nullptr);
