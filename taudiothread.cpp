@@ -46,16 +46,21 @@ void TAudioThread::init(TDecode *decode, TPacketQueue *queue)
 {
     p_decode = decode;
     p_packetQueue = queue;
+    m_disabled = (decode == nullptr || queue == nullptr);
 
     if(!p_audioDev)
         p_audioDev = new TAudioIODevice();//先建好：视频线程起播前就要拿到时钟指针
+    if(m_disabled){
+        qDebug()<<"TAudioThread: no audio stream/decoder, audio disabled";
+        return;
+    }
 
     QAudioDevice dev = QMediaDevices::defaultAudioOutput();
     QAudioFormat fmt = chooseFormat(dev);
     if(fmt.sampleFormat() != QAudioFormat::Int16){
         //重采样固定输出 s16；sink 若不是 s16，数据会被按错误格式解释 → 无声或噪音
         qWarning()<<"TAudioThread: device has no s16 format, audio disabled";
-        //m_disabled = true;
+        m_disabled = true;
         return;
     }
 
@@ -66,7 +71,7 @@ void TAudioThread::init(TDecode *decode, TPacketQueue *queue)
         qWarning() << "TAudioThread: resample open failed, audio disabled";
         delete p_sample;
         p_sample = nullptr;
-        //m_disabled = true;
+        m_disabled = true;
         return;
     }
 
@@ -77,7 +82,7 @@ void TAudioThread::init(TDecode *decode, TPacketQueue *queue)
     p_sink->start(p_audioDev);
     if(p_sink->error() != QtAudio::NoError){
         qWarning()<<"TAudioThread: sink start failed, err="<<int(p_sink->error());
-        //m_disabled = true;
+        m_disabled = true;
         return;
     }
     qDebug()<<"TAudioThread: sink started, rate="<<fmt.sampleRate()<<" ch="<<fmt.channelCount();
@@ -131,6 +136,23 @@ void TAudioThread::drainTail()
 
 
 }
+//音频不可用时也要排空包队列：否则 3MB 队列写满后解封装线程卡在 push，视频跟着停
+void TAudioThread::drainQueueOnly()
+{
+    while(!isInterruptionRequested()){
+        TPacket *tp = nullptr;
+        if(!p_packetQueue->pop(tp))
+            break;                 //队列已停止
+        if(!tp)
+            continue;
+        if(!tp->pkt){              //EOF 标志包
+            delete tp;
+            break;
+        }
+        av_packet_free(&tp->pkt);
+        delete tp;
+    }
+}
 
 bool TAudioThread::takeOne(AVFrame *frame)
 {
@@ -181,6 +203,13 @@ void TAudioThread::run()
 
     if(!p_packetQueue){
         qWarning()<<"TAudioThread: no packet queue, exit";
+        return;
+    }
+
+    //音频没有（无流/初始化失败）：只负责排空队列
+    if(m_disabled){
+        qDebug()<<"TAudioThread: audio disabled, draining queue only";
+        drainQueueOnly();
         return;
     }
 

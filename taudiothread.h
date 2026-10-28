@@ -36,6 +36,14 @@ public:
     //单独送一帧。返回 false 表示线程已被中断
     virtual bool takeOne(AVFrame *frame);
 
+
+    //音频输出设备（内含主时钟）。init() 之后一定非空
+    TAudioIODevice *audioDevice() { return p_audioDev; }
+
+
+    //音频是否不可用（无音频流/打开失败）。视频端据此退回按帧率定节拍
+    bool isDisabled() const { return m_disabled; }
+
     void run() override;
 private:
     TDecode *p_decode = nullptr;
@@ -45,6 +53,9 @@ private:
     TAudioIODevice *p_audioDev = nullptr;
 
 
+    std::atomic<bool> m_disabled{false};
+
+
 
     //选择设备支持的 s16 输出格式
     QAudioFormat chooseFormat(const QAudioDevice &dev);
@@ -52,6 +63,8 @@ private:
     void drainFrames();
     //EOF 收尾：排空解码器 + 重采样缓存，再等缓冲播完
     void drainTail();
+    //音频不可用时排空包队列，避免解封装线程被背压卡死（表现为整片停住）
+    void drainQueueOnly();
 };
 
 #endif // TAUDIOTHREAD_H

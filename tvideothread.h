@@ -63,7 +63,7 @@ public:
     ~TVideoThread();
 
     //组装：解码器 + 视频包队列 + 播放控制块 + 帧率（无音频时算帧间隔）
-    void init(TDecode *decode, TPacketQueue *queue, double fps);
+    void init(TDecode *decode, TPacketQueue *queue, double fps, TAudioIODevice *audioDev);
 
 protected:
     void run() override;

@@ -159,10 +159,11 @@ TVideoThread::~TVideoThread()
     }
 }
 //组装：解码器 + 视频包队列 + 播放控制块 + 帧率（无音频时算帧间隔）
-void TVideoThread::init(TDecode *decode, TPacketQueue *queue, double fps)
+void TVideoThread::init(TDecode *decode, TPacketQueue *queue, double fps, TAudioIODevice *audioDev)
 {
     p_decode = decode;
     p_packetQueue = queue;
+    p_audioDev = audioDev;
     frameDelayMs = (fps > 0) ? (1000.0 / fps) : 40.0;
 
 }

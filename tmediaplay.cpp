@@ -101,7 +101,7 @@ void tmediaplay::play(const QString &url)
     //视频解码显示
     videoThread = new TVideoThread();
     //关键接线：把音频设备（主时钟）交给视频线程，sync() 才有依据
-    videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps());
+    videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps(), audioThread->audioDevice());
     qDebug() << "video packet count is "<<demuxThread->getVideoPackQueue()->getCount();
     //跨线程送显：TVideoThread 运行在工作线程、TVideoWidget 在主线程，
     //必须显式队列连接（参数按值拷贝）。不写会退化为 DirectConnection 风险写法，

@@ -94,7 +94,7 @@ qint64 TAudioIODevice::readData(char *data, qint64 maxlen)
         n &= ~(qint64)1; //对齐到 s16 样本边界
         if(n<=0) break;
 
-        memcpy(data+total, (char *)f->data[0] + frame_pos, size_t(n));
+        memcpy(data+total, (const char *)f->data[0] + frame_pos, size_t(n));
         frame_pos += n;
         total += n;
 
