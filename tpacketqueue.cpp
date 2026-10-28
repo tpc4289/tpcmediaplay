@@ -13,26 +13,34 @@ extern "C"{
 TPacketQueue::TPacketQueue() {}
 
 TPacketQueue::~TPacketQueue()
-{}
+{
+    //析构时把残留的包释放干净，避免线程停止后仍持有 AVPacket 造成泄漏
+    flush();
+}
 
 //入队。调用方须持有 lk（= lock_guard/unique_lock over mux）
 //容量满时在本函数内 wait 等待消费者腾出空间
 void TPacketQueue::push(TPacket *tp, std::unique_lock<std::mutex> &lk)
 {
+    if(!tp)
+        return;
     int64_t in_size = (tp->pkt ? tp->pkt->size:0);
     //判断是否已经满了，满了就阻塞
     condNotFull.wait(lk, [this, in_size]{
         return size + in_size <= MAX_BYTES || !isRunning;
     });
      // 被停止，丢弃
-    if(!isRunning)
+    if(!isRunning){
+        if(tp->pkt)
+            av_packet_free(&tp->pkt);
+        delete tp;
         return;
+    }
      // 2. 入队并累加 size
     packQueue.push(tp);
     count += 1;
-    qDebug()<<"packet push, the size is:"<<tp->pkt->size;
-    if(tp->pkt)
-        size += in_size;
+    qDebug()<<"packet push, the size is:"<<in_size;
+    size += in_size;
     // 3. 通知消费者有数据了
     condNotEmpty.notify_one();
 }
@@ -49,8 +57,10 @@ bool TPacketQueue::pop(TPacket *&tp)
     //取出该pack
     packQueue.pop();
     count -= 1;
-    qDebug()<<"packet pop, the size is:"<<tp->pkt->size;
-    if(tp->pkt)
+    //EOF 包不能取 pkt->size
+    //qDebug()<<"packet pop, the size is:"<<tp->pkt->size;
+    qDebug()<<"packet pop, the size is:"<<(tp && tp->pkt ? tp->pkt->size : 0);
+    if(tp&&tp->pkt)
         size -= tp->pkt->size;
     condNotFull.notify_all();
     return true;

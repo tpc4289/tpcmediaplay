@@ -37,6 +37,14 @@ bool TDemux::getIsEndOf() const {return m_eof;}
 
 int TDemux::getFps() const {return v_fps;}
 
+//是否有音频流
+//与 getFps/getIsEndOf 同样不加锁：audio_idx 只在 open/close 中变更，
+//而 open 发生在解封装线程启动之前（有 happens-before），run() 里读取是安全的
+bool TDemux::hasAudio() const
+{
+    return (audio_idx >= 0);
+}
+
 
 //解封装输入视频文件信息，获取到视频流和音频流信息
 bool TDemux::open(const char *url)
@@ -242,13 +250,16 @@ bool TDemux::seek(double pos)
     AVStream *videoStream = p_formatCtx->streams[video_idx];
     qint64 ts;
     if(videoStream->duration > 0 && videoStream->duration != AV_NOPTS_VALUE){
-        ts = qint64(videoStream->duration*pos);  //获取跳转点
+        ts = qint64(videoStream->duration*pos);  //获取跳转点（流 time_base 单位）
     }else{
         qint64 us = (p_formatCtx->duration > 0) ? qint64(p_formatCtx->duration * pos) : 0;
         ts = av_rescale_q(us, AV_TIME_BASE_Q, videoStream->time_base);
     }
     //AVSEEK_FLAG_FRAME 是按帧号定位，这里给的是时间戳，不能带该标志
-    int ret = av_seek_frame(p_formatCtx, video_idx, ts, AVSEEK_FLAG_BACKWARD);
+    //改为 -1（全部流一起定位）：只按 video_idx seek 时音频会停在旧位置，seek 后音画必然错位
+    //stream_index=-1 时时间戳须为 AV_TIME_BASE（微秒）单位
+    qint64 tsUs = av_rescale_q(ts, videoStream->time_base, AV_TIME_BASE_Q);
+    int ret = av_seek_frame(p_formatCtx, -1, tsUs, AVSEEK_FLAG_BACKWARD);
     mux.unlock();
     return ret >= 0;
 }
@@ -273,6 +284,22 @@ bool TDemux::isAudio(AVPacket *pack)
 {
     if(!pack)
         return false;
-     return pack->stream_index != video_idx;
+    //准确判断是否是音频流的片源
+    //带字幕流/数据流的片源，字幕包会被塞进音频队列送进音频解码器，
+    //表现为音频解码报错、声音异常或直接无声。必须精确匹配音频流索引。
+    mux.lock();
+    bool ok = (audio_idx >= 0 && pack->stream_index == audio_idx);
+    mux.unlock();
+    return ok;
+}
+//判断释放是视频
+bool TDemux::isVideo(AVPacket *pack)
+{
+    if(!pack)
+        return false;
+    mux.lock();
+    bool ok = (video_idx >= 0 && pack->stream_index == video_idx);
+    mux.unlock();
+    return ok;
 }
 

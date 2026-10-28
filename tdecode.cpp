@@ -7,6 +7,11 @@ extern "C"{
 
 TDecode::TDecode() {}
 
+TDecode::~TDecode()
+{
+    close();
+}
+
 
 //根据解码器参数，
 bool TDecode::open(AVCodecParameters *para)
@@ -159,11 +164,18 @@ AVFrame *TDecode::recv()
     int ret = avcodec_receive_frame(codecCtx, frame);
     mux.unlock();
     if(ret != 0){
-        qDebug()<<"avcodec_receive_frame failed!";
+        // qDebug()<<"avcodec_receive_frame failed!";
+        //没有帧可读（EAGAIN/EOF）在轮询取帧循环里是常态，
+        //原实现每次都 qDebug，满屏日志会显著拖慢播放。仅真实错误才打印。
+        if(ret != AVERROR(EAGAIN) && ret != AVERROR_EOF){
+            char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
+            av_strerror(ret, buf, sizeof(buf) - 1);
+            qDebug()<<"avcodec_receive_frame error:"<<buf;
+        }
         av_frame_free(&frame);
         return nullptr;
     }
-    qDebug()<<"avcodec_receive_frame success!";
+    //qDebug()<<"avcodec_receive_frame success!";
     return frame;
 }
 

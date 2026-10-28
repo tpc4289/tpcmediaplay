@@ -21,14 +21,14 @@ class tmediaplay : public QWidget
     Q_OBJECT
 
 private:
-    TDemuxThread *demuxThread;
-    TDecode *videoDecode;
-    TDecode *audioDecode;
-    TVideoWidget *videoWidget;
+    TDemuxThread *demuxThread  = nullptr;
+    TDecode *videoDecode  = nullptr;
+    TDecode *audioDecode  = nullptr;
+    TVideoWidget *videoWidget  = nullptr;
     //视频解码显示
-    TVideoThread *videoThread;
+    TVideoThread *videoThread  = nullptr;
     //音频线程重采样播放
-    TAudioThread *audioThread;
+    TAudioThread *audioThread  = nullptr;
 
 public:
     explicit tmediaplay(QWidget *parent = nullptr);

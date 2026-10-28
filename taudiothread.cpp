@@ -23,13 +23,113 @@ TAudioThread::~TAudioThread()
     // 先请求终止，等待线程退出
     requestInterruption();
     wait();
+
+    // sink/设备在 GUI 线程（init）创建，线程退出后回到这里释放是安全的
+    if(p_sink){
+        p_sink->stop();
+        delete p_sink;
+        p_sink = nullptr;
+    }
+    if(p_sample){
+        p_sample->close();
+        delete p_sample;
+        p_sample = nullptr;
+    }
+    delete p_audioDev;
+    p_audioDev = nullptr;
 }
 
-//获取解码类对象和音频包队列对象
+//组装：解码器 + 队列 + 创建并启动音频设备
+//（在 GUI 线程调用：那里有事件循环，QAudioSink 的状态通知与取数据调度才可靠；
+// 原实现放在 run() 里，覆写的 run 没有 exec()，sink 容易停在 Idle 不再拉数据 → 无声）
 void TAudioThread::init(TDecode *decode, TPacketQueue *queue)
 {
     p_decode = decode;
     p_packetQueue = queue;
+
+    if(!p_audioDev)
+        p_audioDev = new TAudioIODevice();//先建好：视频线程起播前就要拿到时钟指针
+
+    QAudioDevice dev = QMediaDevices::defaultAudioOutput();
+    QAudioFormat fmt = chooseFormat(dev);
+    if(fmt.sampleFormat() != QAudioFormat::Int16){
+        //重采样固定输出 s16；sink 若不是 s16，数据会被按错误格式解释 → 无声或噪音
+        qWarning()<<"TAudioThread: device has no s16 format, audio disabled";
+        //m_disabled = true;
+        return;
+    }
+
+    //重新采样:输出与sink一致
+    p_sample = new TResample();
+    AVCodecContext *ac = p_decode->codecContext();
+    if(!ac || !p_sample->open(ac, fmt.sampleRate(), fmt.channelCount())){
+        qWarning() << "TAudioThread: resample open failed, audio disabled";
+        delete p_sample;
+        p_sample = nullptr;
+        //m_disabled = true;
+        return;
+    }
+
+    p_sink = new QAudioSink(dev, fmt);
+    connect(p_sink, &QAudioSink::stateChanged, this, [](QtAudio::State s) {
+        qDebug() << "sink state changed:" << int(s);
+    }, Qt::QueuedConnection);
+    p_sink->start(p_audioDev);
+    if(p_sink->error() != QtAudio::NoError){
+        qWarning()<<"TAudioThread: sink start failed, err="<<int(p_sink->error());
+        //m_disabled = true;
+        return;
+    }
+    qDebug()<<"TAudioThread: sink started, rate="<<fmt.sampleRate()<<" ch="<<fmt.channelCount();
+}
+
+//收净解码器当前所有帧,收到解码器帧就推入到队列，并推送data给sink
+void TAudioThread::drainFrames()
+{
+    while(AVFrame *af = p_decode->recv()){
+        takeOne(af); //推送到队列
+        av_frame_free(&af); //释放解码帧对象
+    }
+}
+
+//EOF 收尾：排空解码器 + 重采样缓存，再等缓冲播完
+void TAudioThread::drainTail()
+{
+    //flushDecoder 可能因解码器仍满返回 false，反复取帧腾空间
+    for(int i = 0; i < 8; ++i){
+        if(p_decode->flushDecoder())
+            break;
+        drainFrames();
+    }
+
+    //接收剩余帧
+    while (AVFrame *tf = p_decode->recv()) {
+        takeOne(tf);
+        av_frame_free(&tf);
+    }
+
+    //取重采样器内部残留的尾音，否则结尾会被截掉。
+    //注意：flush() 出来的已经是目标格式的 PCM，不能再走 takeOne（那会二次重采样，
+    //表现为结尾音调异常/杂音）；直接入队，并补一个可推进的时钟基准
+    while (AVFrame *tf = p_sample->flush()) {
+        if(tf->pts == AV_NOPTS_VALUE || tf->pts < 0)
+            tf->pts = p_audioDev->getClock();
+        if(tf->pts == CLOCK_NOT_READY)
+            tf->pts = 0;
+        bool pushed = p_audioDev->pushQueue(tf);
+        av_frame_free(&tf);
+        if(!pushed)
+            break;      //缓冲满且已被中断，放弃尾音
+    }
+
+    //等缓冲播完再退出（用真实待播状态，不要用谎报值比较）
+    while (!isInterruptionRequested()){
+        if(p_audioDev->isEmpty())
+            break;
+        msleep(10);
+    }
+
+
 }
 
 bool TAudioThread::takeOne(AVFrame *frame)
@@ -39,19 +139,28 @@ bool TAudioThread::takeOne(AVFrame *frame)
     AVFrame *pcm = p_sample->resample(frame);
     if(!pcm){
         qDebug() << "TAudioThread::takeOne resample return null";
-        return true;
+        return true; //重采样器内部延迟，正常情况
     }
-    //背压：缓冲满时等待声卡消费；同时响应停止/seek
-    while(!p_audioDev->pushQueue(pcm)){
-        av_frame_free(&pcm);
-
-        msleep(10);
-
-        // pcm = p_sample->resample(frame);
-        // if(!pcm)
-        //     return true;
-        return false;
+    //真正的背压：缓冲满就等，一帧都不能丢。
+    while(!isInterruptionRequested()){
+        if(p_audioDev->pushQueue(pcm)){
+            av_frame_free(&pcm);
+            return true;
+        }
+        msleep(5);
     }
+    //原实现 while(!pushQueue(pcm)){ free; msleep; return false; } 循环体第一次就 return，
+    //队列一满即静默丢帧；且 pcm 被 free 后若仍被引用就是二次释放。
+    // while(!p_audioDev->pushQueue(pcm)){
+    //     av_frame_free(&pcm);
+
+    //     msleep(10);
+
+    //     // pcm = p_sample->resample(frame);
+    //     // if(!pcm)
+    //     //     return true;
+    //     return false;
+    // }
     // while(!isInterruptionRequested()){
     //     if(p_audioDev->pushQueue(pcm)){
     //         qDebug() << "push ok, pcm samples:" << pcm->nb_samples << " rate:" << pcm->sample_rate << " ch:" << pcm->ch_layout.nb_channels;
@@ -69,60 +178,39 @@ bool TAudioThread::takeOne(AVFrame *frame)
 void TAudioThread::run()
 {
     qDebug()<<"TAudioThread start";
-    //设备与sink
-    QAudioDevice dev = QMediaDevices::defaultAudioOutput();
-    //选择输出设备
-    QAudioFormat fmt = chooseFormat(dev);
-    if(fmt.sampleFormat() != QAudioFormat::Int16)
-        qDebug()<<"warning: device has no s16 format, using preferred";
 
-    //重新采样:输出与sink一致
-    p_sample = new TResample();
-    AVCodecContext *ac = p_decode ? p_decode->codecContext() : nullptr;
-    if(!ac || !p_sample->open(ac, fmt.sampleRate(), fmt.channelCount())){
-        qDebug() << "TAudioOutput: resample open failed, audio disabled";
-        delete p_sample;
-        p_sample = nullptr;
-        return;
-    }
-
-    p_audioDev = new TAudioIODevice();
-
-    p_sink = new QAudioSink(dev, fmt);
-
-    connect(p_sink, &QAudioSink::stateChanged, this, [](QtAudio::State s) {
-        qDebug() << "sink state changed:" << s;
-    },Qt::QueuedConnection);
-    p_sink->start(p_audioDev);
-    if(p_sink->error() != QtAudio::NoError){
-        qDebug()<<"TAudioOutput: sink start failed";
+    if(!p_packetQueue){
+        qWarning()<<"TAudioThread: no packet queue, exit";
         return;
     }
 
     while(!isInterruptionRequested()){
         TPacket *tp = nullptr;
-        if(!p_packetQueue->pop(tp)){
-            msleep(5);
-            continue;
-        }
+        // if(!p_packetQueue->pop(tp)){
+        //     msleep(5);
+        //     continue;
+        // }
+        if(!p_packetQueue->pop(tp))
+            break;      //pop 返回 false = 队列已停止；原来是 msleep+continue 会死循环空转
         if(!tp)
             continue;
 
         //EOF 标志包：flush 解码器取净尾帧后，等缓冲播完再退出
         if(!tp->pkt){
             delete tp;
-            p_decode->flushDecoder();
-            while (AVFrame *tf = p_decode->recv()) {
-                takeOne(tf);
-                av_frame_free(&tf);
-            }
-            // 等待缓冲区播放完毕
-            while (!isInterruptionRequested())
-            {
-                if (p_audioDev->getBytesAvailable() <= 0)
-                    break;
-                msleep(10);
-            }
+            drainTail();
+            // p_decode->flushDecoder();
+            // while (AVFrame *tf = p_decode->recv()) {
+            //     takeOne(tf);
+            //     av_frame_free(&tf);
+            // }
+            // // 等待缓冲区播放完毕
+            // while (!isInterruptionRequested())
+            // {
+            //     if (p_audioDev->getBytesAvailable() <= 0)
+            //         break;
+            //     msleep(10);
+            // }
             break;
             // for(;;){
             //     AVFrame *tf = p_decode->recv();
@@ -144,8 +232,11 @@ void TAudioThread::run()
 
         if(ret < 0){
             if(ret == AVERROR(EAGAIN)){
-                // 解码器满了，先收帧，本轮包保留，下一轮重发
-                qDebug() << "avcodec_send_packet EAGAIN";
+                //解码器满：包已克隆进 pending。先收帧腾空间，再把 pending 送回。
+                //原实现直接 continue 且从不 resend，pending 永远堵在解码器入口
+                drainFrames();
+                while(p_decode->resend() == AVERROR(EAGAIN) && !isInterruptionRequested())
+                    drainFrames();
             }else{
                 char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
                 av_strerror(ret, buf, sizeof(buf));
@@ -155,10 +246,7 @@ void TAudioThread::run()
         }
 
 
-        while(AVFrame *af = p_decode->recv()){
-            takeOne(af);
-            av_frame_free(&af);
-        }
+        drainFrames();
     }
 
 }
@@ -179,7 +267,14 @@ QAudioFormat TAudioThread::chooseFormat(const QAudioDevice &dev)
             }
         }
     }
-    //兜底：设备首选格式（若非 s16 也照用，重采样仍转 s16，多数后端可隐式处理）
-    qDebug() << "fallback to device preferred format";
-    return dev.preferredFormat();
+    //兜底：设备首选的采样率/声道，但强制 s16。
+    //原实现直接返回 preferredFormat()，若是 float，与固定输出 s16 的重采样不匹配 → 无声/噪音
+    QAudioFormat fmt = dev.preferredFormat();
+    fmt.setSampleFormat(QAudioFormat::Int16);
+    if(dev.isFormatSupported(fmt)){
+        qDebug()<<"fallback to preferred rate/ch with s16:"<<fmt.sampleRate()<<fmt.channelCount();
+        return fmt;
+    }
+    qWarning() << "no supported s16 format on this device";
+    return fmt;
 }

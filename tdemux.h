@@ -36,6 +36,9 @@ public:
     //获取fps
     int getFps() const;
 
+    //是否存在音频流
+    bool hasAudio() const;
+
     //打开媒体文件，或者流媒体 rtmp http rtsp
     virtual bool open(const char *url);
     //有打开就有关闭，主要是关闭解封装后的上下文对象
@@ -50,8 +53,10 @@ public:
     virtual bool seek(double pos);
     //清理缓冲
     virtual void clear();
-    //判断是否是音频
+    //判断是否是音频（精确匹配音频流索引，不能用"非视频"代替）
     virtual bool isAudio(AVPacket *pack);
+    //判断是否是视频
+    virtual bool isVideo(AVPacket *pack);
 
 };
 
