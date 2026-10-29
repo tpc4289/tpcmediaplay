@@ -42,10 +42,11 @@ TAudioThread::~TAudioThread()
 //组装：解码器 + 队列 + 创建并启动音频设备
 //（在 GUI 线程调用：那里有事件循环，QAudioSink 的状态通知与取数据调度才可靠；
 // 原实现放在 run() 里，覆写的 run 没有 exec()，sink 容易停在 Idle 不再拉数据 → 无声）
-void TAudioThread::init(TDecode *decode, TPacketQueue *queue)
+void TAudioThread::init(TDecode *decode, TPacketQueue *queue, TMediaPlayCtrl *playCtrl)
 {
     p_decode = decode;
     p_packetQueue = queue;
+    p_playCtrl = playCtrl;
     m_disabled = (decode == nullptr || queue == nullptr);
 
     if(!p_audioDev)
@@ -275,8 +276,11 @@ void TAudioThread::run()
             continue;
         }
 
-
         drainFrames();
+        //发布音频主时钟（readData 在音频线程推进，这里拷贝共享）
+        int64_t c = audioDevice()->getClock();
+        if (c != CLOCK_NOT_READY)
+            p_playCtrl->audioClockMs = c;
     }
 
 }

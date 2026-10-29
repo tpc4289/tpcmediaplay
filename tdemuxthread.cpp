@@ -95,3 +95,28 @@ void TDemuxThread::run()
     audioPackQueue.stop();
     qDebug() << "TDemuxThread end";
 }
+
+TDemux *TDemuxThread::getTDemux(){return &m_demux;}
+
+TPacketQueue *TDemuxThread::getVideoPackQueue(){return &videoPackQueue;}
+
+TPacketQueue *TDemuxThread::getAudioPackQueue(){return &audioPackQueue;}
+
+TMediaPlayCtrl *TDemuxThread::getMediaPlayCtrl()
+{
+    return &playCtrl;
+}
+
+//视频位置跳转
+bool TDemuxThread::seekTo(double pos)
+{
+    if(m_demux.getTotalMs() <= 0){
+        qDebug() << "seek ignored: live stream or unknown duration";
+        return false;
+    }
+    int p = int(pos*1000.0);
+    if(p < 0) p = 0;
+    if(p > 1000) p = 1000;
+    playCtrl.seekPermille = p;
+    return true;
+}

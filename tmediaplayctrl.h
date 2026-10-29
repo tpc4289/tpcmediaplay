@@ -3,6 +3,9 @@
 
 #include <atomic>
 
+//音频时钟未就绪的哨兵值：起播前、seek 清空缓冲后都是它
+#define CLOCK_NOT_READY (std::numeric_limits<int64_t>::min())
+
 //三条线程共享的播放控制块（由 TDemuxThread 持有，其余线程拿指针）
 struct TMediaPlayCtrl{
     //置位后所有线程退出循环
@@ -17,6 +20,9 @@ struct TMediaPlayCtrl{
 
     //seek 请求（千分位 0-1000），-1 表示无请求；解封装线程读走执行
     std::atomic<int> seekPermille{-1};
+
+    //音频主时钟(毫秒)。INT64_MIN 表示尚未就绪
+    std::atomic<int64_t> audioClockMs{CLOCK_NOT_READY};
 
 };
 

@@ -20,11 +20,18 @@ public:
     void run() override;
 
     //封装提供m_demux对象访问
-    TDemux *getTDemux(){return &m_demux;};
+    TDemux *getTDemux();
     //封装提供videoPackQueue对象访问
-    TPacketQueue *getVideoPackQueue(){return &videoPackQueue;};
+    TPacketQueue *getVideoPackQueue();
     //封装提供audioPackQueue对象访问
-    TPacketQueue *getAudioPackQueue(){return &audioPackQueue;};
+    TPacketQueue *getAudioPackQueue();
+    TMediaPlayCtrl *getMediaPlayCtrl();
+
+    //视频位置跳转
+    bool seekTo(double pos);
+
+    //媒体总时长(ms)，直播流为 0
+    int totalMs() const { return m_demux.getTotalMs(); }
 
 private:
     //解封装对象

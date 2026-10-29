@@ -13,6 +13,17 @@
 #include <QHBoxLayout>
 #include <qaudiosink.h>
 
+
+//根据输入时间，计算分钟和秒，并格式化输出
+static QString fmtTime(int64_t ms)
+{
+    if (ms < 0) ms = 0;
+    int s = int(ms / 1000);
+    return QString("%1:%2")
+        .arg(s / 60, 2, 10, QChar('0'))
+        .arg(s % 60, 2, 10, QChar('0'));
+}
+
 tmediaplay::tmediaplay(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::tmediaplay)
@@ -42,7 +53,7 @@ tmediaplay::tmediaplay(QWidget *parent)
                 border-radius: 2px;
             }
         QSlider::handle:horizontal{
-                width:12px;
+                width:20px;
                 height:12px;
                 margin:-4px 0;
                 background:#ffffff;
@@ -53,13 +64,14 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     //进度条选项
     seekSlider = new QSlider(Qt::Horizontal, this);
-    seekSlider->setRange(0,100);
+    seekSlider->setRange(0,1000);
     seekSlider->setStyleSheet(sliderStyle);
 
     QGroupBox *mediaGroupBox = new QGroupBox(this);
-    mediaGroupBox->setStyleSheet("QGroupBox{background-color: rgba(0,0,0,100);height:60px;width:400px;}");
+    mediaGroupBox->setStyleSheet("QGroupBox{background-color: rgba(0,0,0,100);border: none;}");
 
     QHBoxLayout *hBoxLayout1 = new QHBoxLayout();
+    hBoxLayout1->setContentsMargins(0,0,0,0);
 
 
     //播放进度
@@ -107,7 +119,9 @@ tmediaplay::tmediaplay(QWidget *parent)
     volumnSlider->setRange(0,100);//设置值范围
     volumnSlider->setValue(100);//设置初始值
 
+
     hBoxLayout1->addWidget(durTimeLab);
+    //
     hBoxLayout1->addWidget(stopBtn);
     hBoxLayout1->addWidget(backBtn);
     hBoxLayout1->addWidget(playBtn);
@@ -134,6 +148,10 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     setLayout(gridLayout);
 
+    timer = new QTimer(this);
+
+
+    connect(seekSlider,&QSlider::sliderReleased,this,[this]{mediaSeek(seekSlider->value());});
 
     connect(playBtn,&QPushButton::clicked,this, &tmediaplay::onPlayBtnClicked);
     connect(stopBtn,&QPushButton::clicked,this, &tmediaplay::onStopBtnClicked);
@@ -142,6 +160,8 @@ tmediaplay::tmediaplay(QWidget *parent)
     connect(soundBtn,&QPushButton::clicked,this, &tmediaplay::onSoundBtnClicked);
 
     connect(volumnSlider, &QSlider::valueChanged, this, &tmediaplay::onVolumnSliderValChanged);
+
+    connect(timer, &QTimer::timeout, this, &tmediaplay::onUpdateClockValue);
 
 }
 
@@ -181,6 +201,7 @@ void tmediaplay::play(const QString &url)
         return;
     }
     TDemux *demux = demuxThread->getTDemux();
+    TMediaPlayCtrl *playCtrl = demuxThread->getMediaPlayCtrl();
 
 
     //视频解码器
@@ -216,7 +237,7 @@ void tmediaplay::play(const QString &url)
     //音频线程：先 init。init 里会创建并启动音频设备（含主时钟），
     //这样视频线程随后就能拿到设备指针做同步
     audioThread = new TAudioThread();
-    audioThread->init(audioDecode, demuxThread->getAudioPackQueue());
+    audioThread->init(audioDecode, demuxThread->getAudioPackQueue(), playCtrl);
     qDebug() << "audio packet count is "<<demuxThread->getAudioPackQueue()->getCount();
 
     //视频解码显示
@@ -229,7 +250,6 @@ void tmediaplay::play(const QString &url)
     //在解码线程里直接调 update() 属于跨线程操作 GUI，未定义行为
     connect(videoThread, &TVideoThread::frameReady, videoWidget, &TVideoWidget::slotRepaint, Qt::QueuedConnection);
 
-
     //启动顺序：先消费者（音/视频线程），再生产者（解封装），
     //避免解封装抢跑把 3MB 队列塞满后卡在背压上
     audioThread->start();
@@ -241,11 +261,39 @@ void tmediaplay::play(const QString &url)
     playing = true;
     playBtn->setIcon(QIcon(":/images/pause.png"));
     paused = false;
+
+    timer->start(500);
     //未静音
     isMute = false;
 
     //记录下音频音量大小
     volumnSize = audioThread->audioSink()->volume();
+}
+
+//当拖动进度条时候，进行视频播放跳转
+void tmediaplay::mediaSeek(int permille)
+{
+    if(!playing)
+        return;
+    demuxThread->seekTo(permille/1000.0);
+}
+
+void tmediaplay::onUpdateClockValue()
+{
+    if(!playing)
+        return;
+    qDebug()<<"show clock start!";
+    //原子性获取音频主时钟
+    int64_t clock = demuxThread->getMediaPlayCtrl()->audioClockMs.load();
+    int totalMs = demuxThread->totalMs();
+    if (clock == CLOCK_NOT_READY) {
+        durTimeLab->setText(QString("--:-- / %1").arg(fmtTime(totalMs)));
+        return;
+    }
+    durTimeLab->setText(fmtTime(clock) + " / " + fmtTime(totalMs));
+    if (totalMs > 0 && !seekSlider->isSliderDown())
+        seekSlider->setValue(int(clock * 1000 / totalMs));
+
 }
 
 //播放按钮点击响应事件

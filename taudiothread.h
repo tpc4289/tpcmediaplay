@@ -10,6 +10,7 @@ class QAudioDevice;
 class TResample;
 class QAudioSink;
 class TAudioIODevice;
+class TMediaPlayCtrl;
 
 struct AVFrame;
 
@@ -31,7 +32,7 @@ public:
 
     //组装：解码器 + 音频包队列。同时创建并启动音频设备，
     //decode 为空（无音频流）时标记为不可用，但仍会排空队列
-    virtual void init(TDecode *decode, TPacketQueue *queue);
+    virtual void init(TDecode *decode, TPacketQueue *queue, TMediaPlayCtrl *playCtrl);
 
     //单独送一帧。返回 false 表示线程已被中断
     virtual bool takeOne(AVFrame *frame);
@@ -56,6 +57,7 @@ private:
     TResample *p_sample = nullptr;
     QAudioSink *p_sink = nullptr;
     TAudioIODevice *p_audioDev = nullptr;
+    TMediaPlayCtrl *p_playCtrl = nullptr;
 
 
     std::atomic<bool> m_disabled{false};

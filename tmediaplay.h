@@ -5,6 +5,7 @@
 #include <QSlider>
 #include <QPushButton>
 #include <QLabel>
+#include <QTimer>
 
 
 class TDemuxThread;
@@ -45,6 +46,9 @@ private:
     QSlider *volumnSlider = nullptr;//音量大小拖动条
 
 
+    QTimer *timer = nullptr; //用来显示播放进度的时间
+
+
     bool playing = false;
     bool paused = false;
 
@@ -61,10 +65,14 @@ public:
     //打开并播放（在 show 之后调用）。重复调用不支持换源，仅播一次
     void play(const QString &url);
 
+    //视频进度拖动跳转
+    void mediaSeek(int permille);
+
 private:
     Ui::tmediaplay *ui;
 
 private slots:
+    void onUpdateClockValue();
     void onPlayBtnClicked(); //播放按钮点击槽函数
     void onStopBtnClicked(); //停止按钮点击槽函数
 

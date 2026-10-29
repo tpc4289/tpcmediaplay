@@ -5,10 +5,11 @@
 #include <deque>
 #include <mutex>
 
+#include "tmediaplayctrl.h"
+
 struct AVFrame;
 
-//音频时钟未就绪的哨兵值：起播前、seek 清空缓冲后都是它
-#define CLOCK_NOT_READY (std::numeric_limits<int64_t>::min())
+
 
 /*
  * 音频输出设备（pull 模式）
