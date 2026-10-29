@@ -1,8 +1,11 @@
 cmake_minimum_required(VERSION 3.19)
 project(tmediaplay LANGUAGES CXX)
 
-SET (FFMPEG_DIR "D:/developSoft/ffmpeg-8.1.2-full_build-shared")
-# SET (FFMPEG_DIR "E:/code/qt/lesson_code/ffmpeg")
+# SET (FFMPEG_DIR "D:/developSoft/ffmpeg-8.1.2-full_build-shared")
+SET (FFMPEG_DIR "E:/code/qt/lesson_code/ffmpeg")
+
+#必须加这个，不然资源文件里面的图片识别不到
+set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets OpenGL OpenGLWidgets Multimedia)
 find_package(Qt6 REQUIRED COMPONENTS Multimedia)
@@ -24,6 +27,8 @@ qt_add_executable(tmediaplay
     tvideothread.h tvideothread.cpp
     taudiothread.h taudiothread.cpp
     taudioiodevice.h taudioiodevice.cpp
+    tmediaplayctrl.h
+    res.qrc
 )
 target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 

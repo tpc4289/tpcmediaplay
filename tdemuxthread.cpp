@@ -33,6 +33,17 @@ void TDemuxThread::run()
     for(;;){
         if(isInterruptionRequested())
             break;
+
+        //处理 seek：在本线程执行，避免与其他线程并发操作解封装上下文
+        int seekP = playCtrl.seekPermille.exchange(-1);
+        if(seekP >= 0){
+            double pos = seekP/1000.0;
+            m_demux.seek(pos);
+            videoPackQueue.flush();        //丢弃旧位置的未消费包
+            audioPackQueue.flush();
+        }
+
+
         //获取视频文件包
         AVPacket *pack = m_demux.read();
         //如果获取为空

@@ -4,6 +4,7 @@
 #include <QThread>
 
 #include "tdemux.h"
+#include "tmediaplayctrl.h"
 #include "tpacketqueue.h"
 
 class TDemuxThread : public QThread
@@ -32,6 +33,8 @@ private:
     TPacketQueue videoPackQueue;
     //音频包队列
     TPacketQueue audioPackQueue;
+    //播放器控制对象
+    TMediaPlayCtrl playCtrl;
 
 signals:
     //文件到尾部信号

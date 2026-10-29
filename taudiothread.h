@@ -40,9 +40,14 @@ public:
     //音频输出设备（内含主时钟）。init() 之后一定非空
     TAudioIODevice *audioDevice() { return p_audioDev; }
 
+    //获取AudioSink，实现音频设备控制
+    QAudioSink *audioSink(){ return p_sink; }
+
 
     //音频是否不可用（无音频流/打开失败）。视频端据此退回按帧率定节拍
     bool isDisabled() const { return m_disabled; }
+
+
 
     void run() override;
 private:

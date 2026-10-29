@@ -11,6 +11,7 @@
 #include <QIcon>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <qaudiosink.h>
 
 tmediaplay::tmediaplay(QWidget *parent)
     : QWidget(parent)
@@ -56,20 +57,61 @@ tmediaplay::tmediaplay(QWidget *parent)
     seekSlider->setStyleSheet(sliderStyle);
 
     QGroupBox *mediaGroupBox = new QGroupBox(this);
-    mediaGroupBox->setStyleSheet("QGroupBox{background-color: rgba(0,0,0,100);height:42px;width:200px;}");
+    mediaGroupBox->setStyleSheet("QGroupBox{background-color: rgba(0,0,0,100);height:60px;width:400px;}");
 
     QHBoxLayout *hBoxLayout1 = new QHBoxLayout();
+
+
+    //播放进度
+    durTimeLab = new QLabel("00:00 / --:--",this);
+
+    //按钮样式
+    QString mediaBtnStyle = "QPushButton { border: none; background-color: transparent; }";
+    QSize btnIconSize(30,30);
+
+
+    //停止播放按钮
+    stopBtn = new QPushButton(this);
+    stopBtn->setIcon(QIcon(":/images/stop.png"));
+    stopBtn->setIconSize(btnIconSize);
+    stopBtn->setStyleSheet(mediaBtnStyle);
+
+    //后退按钮
+    backBtn = new QPushButton(this);
+    backBtn->setIcon(QIcon(":/images/back.png"));
+    backBtn->setIconSize(btnIconSize);
+    backBtn->setStyleSheet(mediaBtnStyle);
+
     //播放按钮
     playBtn = new QPushButton(this);
-    playBtn->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStart));
-    stopBtn = new QPushButton(this);
-    stopBtn->setIcon(QIcon::fromTheme(QIcon::ThemeIcon::MediaPlaybackStop));
+    playBtn->setIcon(QIcon(":/images/play.png"));
+    //playBtn->setFixedSize(50,50);
+    playBtn->setIconSize(QSize(50,50));
+    playBtn->setStyleSheet(mediaBtnStyle);
+
+    //前进按钮
+    forwardBtn = new QPushButton(this);
+    forwardBtn->setIcon(QIcon(":/images/forward.png"));
+    forwardBtn->setIconSize(btnIconSize);
+    forwardBtn->setStyleSheet(mediaBtnStyle);
+
+    //静音按钮
     soundBtn = new QPushButton(this);
+    soundBtn->setIcon(QIcon(":/images/soundon.png"));
+    soundBtn->setIconSize(btnIconSize);
+    soundBtn->setStyleSheet(mediaBtnStyle);
+
+
 
     volumnSlider = new QSlider(Qt::Horizontal,this);
+    volumnSlider->setRange(0,100);//设置值范围
+    volumnSlider->setValue(100);//设置初始值
 
+    hBoxLayout1->addWidget(durTimeLab);
     hBoxLayout1->addWidget(stopBtn);
+    hBoxLayout1->addWidget(backBtn);
     hBoxLayout1->addWidget(playBtn);
+    hBoxLayout1->addWidget(forwardBtn);
     hBoxLayout1->addWidget(soundBtn);
     hBoxLayout1->addWidget(volumnSlider);
 
@@ -93,9 +135,13 @@ tmediaplay::tmediaplay(QWidget *parent)
     setLayout(gridLayout);
 
 
+    connect(playBtn,&QPushButton::clicked,this, &tmediaplay::onPlayBtnClicked);
+    connect(stopBtn,&QPushButton::clicked,this, &tmediaplay::onStopBtnClicked);
 
 
+    connect(soundBtn,&QPushButton::clicked,this, &tmediaplay::onSoundBtnClicked);
 
+    connect(volumnSlider, &QSlider::valueChanged, this, &tmediaplay::onVolumnSliderValChanged);
 
 }
 
@@ -191,6 +237,58 @@ void tmediaplay::play(const QString &url)
     demuxThread->start();
 
 
+    //标注视频正在播放
+    playing = true;
+    playBtn->setIcon(QIcon(":/images/pause.png"));
+    paused = false;
+    //未静音
+    isMute = false;
+
+    //记录下音频音量大小
+    volumnSize = audioThread->audioSink()->volume();
+}
+
+//播放按钮点击响应事件
+void tmediaplay::onPlayBtnClicked()
+{
+    if(playing){
+        playing = false;
+        playBtn->setIcon(QIcon(":/images/play.png"));
+        paused = true;
+    }else{
+        playing = true;
+        playBtn->setIcon(QIcon(":/images/pause.png"));
+        paused = false;
+    }
+    qDebug()<<"play button clicked";
+}
+//停止按钮点击响应事件
+void tmediaplay::onStopBtnClicked()
+{
 
 
+}
+
+void tmediaplay::onSoundBtnClicked()
+{
+
+    if(isMute){
+        soundBtn->setIcon(QIcon(":/images/soundon.png"));
+        audioThread->audioSink()->setVolume(volumnSize);
+        //volumnSlider->setValue(volumnSize*100);
+    }else{
+        //记录静音前的音量值
+        volumnSize = audioThread->audioSink()->volume();
+        soundBtn->setIcon(QIcon(":/images/soundoff.png"));
+        audioThread->audioSink()->setVolume(0.0);
+        //volumnSlider->setValue(0);
+    }
+    isMute = !isMute;
+}
+
+void tmediaplay::onVolumnSliderValChanged(int size)
+{
+    qreal volSize = size/100.0;
+    audioThread->audioSink()->setVolume(volSize);
+    volumnSize = volSize;
 }

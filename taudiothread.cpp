@@ -85,6 +85,7 @@ void TAudioThread::init(TDecode *decode, TPacketQueue *queue)
         m_disabled = true;
         return;
     }
+
     qDebug()<<"TAudioThread: sink started, rate="<<fmt.sampleRate()<<" ch="<<fmt.channelCount();
 }
 
