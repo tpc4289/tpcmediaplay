@@ -19,15 +19,20 @@ TPacketQueue::~TPacketQueue()
 }
 
 //入队。调用方须持有 lk（= lock_guard/unique_lock over mux）
-//容量满时在本函数内 wait 等待消费者腾出空间
-void TPacketQueue::push(TPacket *tp, std::unique_lock<std::mutex> &lk)
+//容量满时在本函数内 wait 等待消费者腾出空间, type用来标注是视频还是音频 0代表视频，1代表音频
+void TPacketQueue::push(TPacket *tp,int type, std::unique_lock<std::mutex> &lk)
 {
     if(!tp)
         return;
     int64_t in_size = (tp->pkt ? tp->pkt->size:0);
+    //type用来标注是视频还是音频 0代表视频，1代表音频
+    int in_type = type;
     //判断是否已经满了，满了就阻塞
-    condNotFull.wait(lk, [this, in_size]{
-        return size + in_size <= MAX_BYTES || !isRunning;
+    condNotFull.wait(lk, [this, in_size, in_type]{
+        if(in_type == 0)
+            return size + in_size <= VIDEO_MAX_BYTES || !isRunning;
+        else
+            return size + in_size <= AUDIO_MAX_BYTES || !isRunning;
     });
      // 被停止，丢弃
     if(!isRunning){
@@ -88,6 +93,11 @@ void TPacketQueue::stop()
     isRunning = false;
     condNotEmpty.notify_all();
     condNotFull.notify_all();
+}
+//重新启动
+void TPacketQueue::restart() {
+    std::lock_guard<std::mutex> lk(mux);
+    isRunning = true;
 }
 
 int TPacketQueue::getCount()

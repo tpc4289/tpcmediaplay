@@ -12,6 +12,6 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     tmediaplay w;
     w.show();
-    w.play("E:/jmds03e12.mp4");
+    w.play("G:/download/BitComet/ffxxz35.mp4");
     return QApplication::exec();
 }

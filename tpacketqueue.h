@@ -6,7 +6,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <queue>
-#include <bits/unique_lock.h>
+#include <atomic>
 
 
 
@@ -28,21 +28,30 @@ private:
     int count = 0;//队列元素个数
     std::atomic<bool> isRunning{true};
 
+
+
 public:
-    static constexpr int64_t MAX_BYTES = 3 * 1024 * 1024;   //容量上限 3MB
+    // static constexpr int64_t MAX_BYTES = 1 * 1024 * 1024;   //容量上限 3MB
+    //分开设置视频和音频队列最大大小
+    static constexpr int64_t VIDEO_MAX_BYTES = 1 * 1024 * 1024; //视频
+    static constexpr int64_t AUDIO_MAX_BYTES = 1 * 32 * 1024; //音频
+
     TPacketQueue();
     ~TPacketQueue();
     //入队。调用方须持有 lk（= lock_guard/unique_lock over mux）
     //容量满时在本函数内 wait 等待消费者腾出空间
-    virtual void push(TPacket *tp, std::unique_lock<std::mutex> &lk);
+    virtual void push(TPacket *tp,int type, std::unique_lock<std::mutex> &lk);
     //出队（阻塞直到有数据或被停止）。返回 false 表示已停止
     virtual bool pop(TPacket *&tp);
     //清空队列
     virtual void flush();
     //停止：唤醒所有阻塞点，消费者将退出
     virtual void stop();
+    //重启
+    void restart();
     //获取队列元素个数
     virtual int getCount();
+
     std::mutex mux;   //供外部（解封装线程）持锁调用 push
 
 };

@@ -29,5 +29,11 @@
         <file>images/stop.png</file>
         <file>images/soundoff.png</file>
         <file>images/soundon.png</file>
+        <file>images/exitfull.png</file>
+        <file>images/fullscreen.png</file>
+        <file>images/allcycle.png</file>
+        <file>images/onecycle.png</file>
+        <file>images/onestop.png</file>
+        <file>images/random.png</file>
     </qresource>
 </RCC>

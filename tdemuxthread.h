@@ -18,6 +18,8 @@ public:
     virtual bool openMedia(const char *url);
 
     void run() override;
+    //请求所有线程退出（先停消费者，再停自己）
+    void stopAll();
 
     //封装提供m_demux对象访问
     TDemux *getTDemux();
@@ -32,6 +34,10 @@ public:
 
     //媒体总时长(ms)，直播流为 0
     int totalMs() const { return m_demux.getTotalMs(); }
+
+    //暂停/继续（UI 线程调用，线程内轮询响应）
+    void setPause(bool p) { playCtrl.paused = p; }
+    bool isPaused() const { return playCtrl.paused; }
 
 private:
     //解封装对象

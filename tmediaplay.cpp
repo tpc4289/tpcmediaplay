@@ -24,6 +24,62 @@ static QString fmtTime(int64_t ms)
         .arg(s % 60, 2, 10, QChar('0'));
 }
 
+
+//窗口关闭
+void tmediaplay::closeAll()
+{
+    if(timer)
+        timer->stop();
+    //1. 通知全部线程退出并停队列（唤醒阻塞在 pop/push 的读写线程）
+    if(demuxThread)
+        demuxThread->stopAll();
+
+    //等消费者真正结束
+    if(videoThread){
+        videoThread->requestInterruption();
+        videoThread->quit();
+        videoThread->wait(3000);
+    }
+    if(audioThread){
+        audioThread->requestInterruption();
+        audioThread->quit();
+        audioThread->wait(3000);
+    }
+    //3. 释放。顺序：线程对象 -> 解码器（解码器被线程引用，线程已停才安全）
+    delete videoThread;
+    videoThread = nullptr;
+    delete audioThread;
+    audioThread = nullptr;
+    delete demuxThread;
+    demuxThread = nullptr;
+    delete videoDecode;
+    videoDecode = nullptr;
+    delete audioDecode;
+    audioDecode = nullptr;
+
+    playing = false;
+    paused = false;
+}
+
+void tmediaplay::closeEvent(QCloseEvent *event)
+{
+
+    event->accept();
+}
+
+//按键点击事件，实现按ESC键退出全屏
+void tmediaplay::keyPressEvent(QKeyEvent *event)
+{
+    if(event->key() == Qt::Key_Escape && window()->isFullScreen()){
+        window()->showNormal();
+        fullScreenBtn->setVisible(true);
+        exitFullBtn->setVisible(false);
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
 tmediaplay::tmediaplay(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::tmediaplay)
@@ -31,19 +87,20 @@ tmediaplay::tmediaplay(QWidget *parent)
     ui->setupUi(this);
     //
     setWindowTitle("tpcmediaplay播放器");
+
     resize(900,640);
 
 
     videoWidget = new TVideoWidget(this);
     QGridLayout *gridLayout = new QGridLayout(this);
     gridLayout->setContentsMargins(0,0,0,0);
+    //视频区放在第0行，设置跨3行，并铺满3行全部区域
+    gridLayout->addWidget(videoWidget, 0, 0, 3, 1);
     gridLayout->setSpacing(0);
-    gridLayout->addWidget(videoWidget, 0, 0);
-
 
     const QString sliderStyle = R"(
         QSlider{
-                background-color: rgba(0,0,0,0);
+                background-color: rgba(0,0,0,70);
                 height: 36px;
                 padding: 0px 15px;
             }
@@ -78,65 +135,106 @@ tmediaplay::tmediaplay(QWidget *parent)
     durTimeLab = new QLabel("00:00 / --:--",this);
 
     //按钮样式
-    QString mediaBtnStyle = "QPushButton { border: none; background-color: transparent; }";
+    QString mediaBtnStyle = "QPushButton { border: none; background-color: transparent;}";
+    //QString mediaBtnStyle = "QPushButton{width: 30px, height: 30px }";
     QSize btnIconSize(30,30);
+    QSize btnSize(30,30);
 
 
     //停止播放按钮
     stopBtn = new QPushButton(this);
     stopBtn->setIcon(QIcon(":/images/stop.png"));
     stopBtn->setIconSize(btnIconSize);
+    stopBtn->setFixedSize(btnSize);
     stopBtn->setStyleSheet(mediaBtnStyle);
 
     //后退按钮
     backBtn = new QPushButton(this);
     backBtn->setIcon(QIcon(":/images/back.png"));
     backBtn->setIconSize(btnIconSize);
+    backBtn->setFixedSize(btnSize);
     backBtn->setStyleSheet(mediaBtnStyle);
 
     //播放按钮
     playBtn = new QPushButton(this);
     playBtn->setIcon(QIcon(":/images/play.png"));
-    //playBtn->setFixedSize(50,50);
+    playBtn->setFixedSize(50,50);
     playBtn->setIconSize(QSize(50,50));
     playBtn->setStyleSheet(mediaBtnStyle);
 
     //前进按钮
     forwardBtn = new QPushButton(this);
     forwardBtn->setIcon(QIcon(":/images/forward.png"));
+    forwardBtn->setFixedSize(btnSize);
     forwardBtn->setIconSize(btnIconSize);
     forwardBtn->setStyleSheet(mediaBtnStyle);
+
+
+    //播放模式按钮
+    // = {":/images/fullcycle.png",":/images/onecycle.png",":/images/random.png",":/images/onestop.png"};
+    modelBtn = new QPushButton(this);
+    modelBtn->setIcon(QIcon(":/images/onestop.png"));
+    modelBtn->setFixedSize(btnSize);
+    modelBtn->setIconSize(btnIconSize);
+    modelBtn->setStyleSheet(mediaBtnStyle);
 
     //静音按钮
     soundBtn = new QPushButton(this);
     soundBtn->setIcon(QIcon(":/images/soundon.png"));
+    soundBtn->setFixedSize(btnSize);
     soundBtn->setIconSize(btnIconSize);
     soundBtn->setStyleSheet(mediaBtnStyle);
 
-
-
+    //音量拖动条
     volumnSlider = new QSlider(Qt::Horizontal,this);
     volumnSlider->setRange(0,100);//设置值范围
     volumnSlider->setValue(100);//设置初始值
 
+    //全屏按钮
+    fullScreenBtn = new QPushButton(this);
+    fullScreenBtn->setIcon(QIcon(":/images/fullscreen.png"));
+    fullScreenBtn->setFixedSize(btnSize);
+    fullScreenBtn->setIconSize(btnIconSize);
+    fullScreenBtn->setStyleSheet(mediaBtnStyle);
 
+    //退出全屏按钮
+    exitFullBtn = new QPushButton(this);
+    exitFullBtn->setIcon(QIcon(":/images/exitfull.png"));
+    exitFullBtn->setFixedSize(btnSize);
+    exitFullBtn->setIconSize(btnIconSize);
+    exitFullBtn->setStyleSheet(mediaBtnStyle);
+    exitFullBtn->setVisible(false);
+
+
+
+
+
+    hBoxLayout1->addStretch();          // 【新增】左侧弹簧：把中间的图标向右推
     hBoxLayout1->addWidget(durTimeLab);
     //
+    hBoxLayout1->addStretch();
     hBoxLayout1->addWidget(stopBtn);
     hBoxLayout1->addWidget(backBtn);
+
     hBoxLayout1->addWidget(playBtn);
+
     hBoxLayout1->addWidget(forwardBtn);
+    hBoxLayout1->addWidget(modelBtn);
+    hBoxLayout1->addStretch();
     hBoxLayout1->addWidget(soundBtn);
     hBoxLayout1->addWidget(volumnSlider);
+    hBoxLayout1->addWidget(fullScreenBtn);
+    hBoxLayout1->addWidget(exitFullBtn);
 
 
     mediaGroupBox->setLayout(hBoxLayout1);
+    mediaGroupBox->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
 
 
 
 
-    gridLayout->addWidget(mediaGroupBox, 0, 0,Qt::AlignBottom|Qt::AlignCenter);
+
 
 
 
@@ -144,7 +242,9 @@ tmediaplay::tmediaplay(QWidget *parent)
     // 第一行拉伸，GL控件自动放大填满窗口
     gridLayout->setRowStretch(0, 1);
 
-    gridLayout->addWidget(seekSlider, 0, 0,Qt::AlignBottom);
+    gridLayout->addWidget(seekSlider, 1, 0,Qt::AlignBottom);
+
+    gridLayout->addWidget(mediaGroupBox, 2, 0,Qt::AlignBottom);
 
     setLayout(gridLayout);
 
@@ -156,12 +256,21 @@ tmediaplay::tmediaplay(QWidget *parent)
     connect(playBtn,&QPushButton::clicked,this, &tmediaplay::onPlayBtnClicked);
     connect(stopBtn,&QPushButton::clicked,this, &tmediaplay::onStopBtnClicked);
 
+    connect(modelBtn,&QPushButton::clicked,this, &tmediaplay::onModelBtnClicked);
+
 
     connect(soundBtn,&QPushButton::clicked,this, &tmediaplay::onSoundBtnClicked);
 
     connect(volumnSlider, &QSlider::valueChanged, this, &tmediaplay::onVolumnSliderValChanged);
 
+    //全屏按钮点击事件驱动
+    connect(fullScreenBtn, &QPushButton::clicked, this, &tmediaplay::onFullScreenBtnClicked);
+    //退出全屏按钮点击事件驱动
+    connect(exitFullBtn, &QPushButton::clicked, this, &tmediaplay::onExitFullBtnClicked);
+
     connect(timer, &QTimer::timeout, this, &tmediaplay::onUpdateClockValue);
+
+
 
 }
 
@@ -243,7 +352,7 @@ void tmediaplay::play(const QString &url)
     //视频解码显示
     videoThread = new TVideoThread();
     //关键接线：把音频设备（主时钟）交给视频线程，sync() 才有依据
-    videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps(), audioThread->audioDevice());
+    videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps(), audioThread->audioDevice(), playCtrl);
     qDebug() << "video packet count is "<<demuxThread->getVideoPackQueue()->getCount();
     //跨线程送显：TVideoThread 运行在工作线程、TVideoWidget 在主线程，
     //必须显式队列连接（参数按值拷贝）。不写会退化为 DirectConnection 风险写法，
@@ -299,22 +408,47 @@ void tmediaplay::onUpdateClockValue()
 //播放按钮点击响应事件
 void tmediaplay::onPlayBtnClicked()
 {
-    if(playing){
-        playing = false;
-        playBtn->setIcon(QIcon(":/images/play.png"));
-        paused = true;
-    }else{
-        playing = true;
+    if(!playing)
+        return;
+    if(paused){
         playBtn->setIcon(QIcon(":/images/pause.png"));
-        paused = false;
+    }else{
+        playBtn->setIcon(QIcon(":/images/play.png"));
     }
+    paused = !paused;
+    demuxThread->setPause(paused);
+
     qDebug()<<"play button clicked";
 }
 //停止按钮点击响应事件
 void tmediaplay::onStopBtnClicked()
 {
+    closeAll();
+}
 
-
+//播放模式按钮点击事件
+void tmediaplay::onModelBtnClicked()
+{
+    switch (modelIndex) {
+    case 0:
+        modelBtn->setIcon(QIcon(":/images/onecycle.png"));
+        modelIndex++;
+        break;
+    case 1:
+        modelBtn->setIcon(QIcon(":/images/allcycle.png"));
+        modelIndex++;
+        break;
+    case 2:
+        modelBtn->setIcon(QIcon(":/images/random.png"));
+        modelIndex++;
+        break;
+    case 3:
+        modelBtn->setIcon(QIcon(":/images/onestop.png"));
+        modelIndex = 0;
+        break;
+    default:
+        break;
+    }
 }
 
 void tmediaplay::onSoundBtnClicked()
@@ -339,4 +473,18 @@ void tmediaplay::onVolumnSliderValChanged(int size)
     qreal volSize = size/100.0;
     audioThread->audioSink()->setVolume(volSize);
     volumnSize = volSize;
+}
+
+void tmediaplay::onFullScreenBtnClicked()
+{
+    showFullScreen();
+    fullScreenBtn->setVisible(false);
+    exitFullBtn->setVisible(true);
+}
+
+void tmediaplay::onExitFullBtnClicked()
+{
+    showNormal();
+    fullScreenBtn->setVisible(true);
+    exitFullBtn->setVisible(false);
 }

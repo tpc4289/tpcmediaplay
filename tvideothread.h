@@ -8,6 +8,7 @@
 
 class TDecode;
 class TPacketQueue;
+class TMediaPlayCtrl;
 struct AVFrame;
 struct SwsContext;
 
@@ -26,6 +27,9 @@ private:
     TDecode *p_decode = nullptr;
     TPacketQueue *p_packetQueue = nullptr;
     SwsContext *swsCtx = nullptr;
+
+    //控制类指针对象
+    TMediaPlayCtrl *p_playCtrl = nullptr;
     int swsFmt = -1;
     int swsWidth = 0;
     int swsHeight = 0;
@@ -63,7 +67,7 @@ public:
     ~TVideoThread();
 
     //组装：解码器 + 视频包队列 + 播放控制块 + 帧率（无音频时算帧间隔）
-    void init(TDecode *decode, TPacketQueue *queue, double fps, TAudioIODevice *audioDev);
+    void init(TDecode *decode, TPacketQueue *queue, double fps, TAudioIODevice *audioDev, TMediaPlayCtrl *playCtrl);
 
 protected:
     void run() override;

@@ -63,6 +63,9 @@ private:
     std::atomic<bool> m_disabled{false};
 
 
+    bool pausedHandled = false;       //已对 sink 做过 suspend，避免重复
+
+
 
     //选择设备支持的 s16 输出格式
     QAudioFormat chooseFormat(const QAudioDevice &dev);

@@ -216,6 +216,30 @@ void TAudioThread::run()
     }
 
     while(!isInterruptionRequested()){
+
+        if(p_playCtrl->stopRequest)
+            break;
+        //seek：清解码缓冲与播放缓冲（时钟由 requestFlushAll 复位）
+        if(p_playCtrl->takeFlush(&TMediaPlayCtrl::flushAudio)){
+            p_decode->clear();
+            p_audioDev->clearBuffer();
+            p_sink->reset();
+        }
+
+        if(p_playCtrl->paused){
+            if(!pausedHandled){
+                p_sink->suspend();
+                p_audioDev->setPaused(true);
+                pausedHandled = true;
+            }
+        }
+
+        if(pausedHandled){
+            p_audioDev->setPaused(false);
+            p_sink->resume();
+            pausedHandled = false;
+        }
+
         TPacket *tp = nullptr;
         // if(!p_packetQueue->pop(tp)){
         //     msleep(5);

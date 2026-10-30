@@ -43,6 +43,12 @@ void TDemuxThread::run()
             audioPackQueue.flush();
         }
 
+        //暂停：不读新包，队列水位保持不变
+        if (playCtrl.paused) {
+            msleep(10);
+            continue;
+        }
+
 
         //获取视频文件包
         AVPacket *pack = m_demux.read();
@@ -51,17 +57,17 @@ void TDemuxThread::run()
             //首先判断是否是因为到文件尾部了
             if(m_demux.getIsEndOf()){
                 qDebug() << "TDemuxThread EOF";
-                //向两条队列各压入一个 EOF 标志包（pkt==nullptr）
-                auto pushEof = [&](TPacketQueue *queue) {
+                //向两条队列各压入一个 EOF 标志包（pkt==nullptr） ,type用来传入辨别为视频队列还是音频队列
+                auto pushEof = [&](TPacketQueue *queue, int type) {
                     TPacket *tp = new TPacket();   //pkt=nullptr, pts=-1
                     std::unique_lock<std::mutex> lk(queue->mux);
-                    queue->push(tp, lk);
+                    queue->push(tp, type, lk);
                 };
                 //视频和音频队列插入一个尾部
-                pushEof(&videoPackQueue);
+                pushEof(&videoPackQueue, 0);
                 //无音频流时不必给音频队列发 EOF：没人消费会一直卡在 push 的背压等待
                 if(hasAudio)
-                    pushEof(&audioPackQueue);
+                    pushEof(&audioPackQueue, 1);
                 //发送尾部信号
                 emit endOfReached();
                 break;
@@ -73,10 +79,13 @@ void TDemuxThread::run()
         //判断是视频包还是音频包
         //修改为精准判断
         TPacketQueue *queue = nullptr;
-        if(m_demux.isVideo(pack))
+        int type = 0;
+        if(m_demux.isVideo(pack)){
             queue = &videoPackQueue;
-        else if(m_demux.isAudio(pack))
+        }else if(m_demux.isAudio(pack)){
             queue = &audioPackQueue;
+            type = 1;
+        }
         else{
             //字幕等其它流：直接丢弃，不进任何解码队列
             av_packet_free(&pack);
@@ -87,13 +96,27 @@ void TDemuxThread::run()
         tp->pkt = pack;
         tp->pts = pack->pts;
         std::unique_lock<std::mutex> lk(queue->mux);
-        queue->push(tp, lk);         //满时在此 wait，形成背压
+        queue->push(tp, type, lk);         //满时在此 wait，形成背压
     }
 
     //收尾：确保消费者被唤醒退出
     videoPackQueue.stop();
     audioPackQueue.stop();
     qDebug() << "TDemuxThread end";
+}
+
+void TDemuxThread::stopAll()
+{
+    playCtrl.stopRequest = true;
+    playCtrl.paused = false; //暂停中退出时先放开
+    videoPackQueue.stop();
+    audioPackQueue.stop();
+    if(isRunning()){
+        requestInterruption();
+        quit();
+        wait(3000);
+    }
+
 }
 
 TDemux *TDemuxThread::getTDemux(){return &m_demux;}

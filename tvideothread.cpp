@@ -159,11 +159,12 @@ TVideoThread::~TVideoThread()
     }
 }
 //组装：解码器 + 视频包队列 + 播放控制块 + 帧率（无音频时算帧间隔）
-void TVideoThread::init(TDecode *decode, TPacketQueue *queue, double fps, TAudioIODevice *audioDev)
+void TVideoThread::init(TDecode *decode, TPacketQueue *queue, double fps, TAudioIODevice *audioDev, TMediaPlayCtrl *playCtrl)
 {
     p_decode = decode;
     p_packetQueue = queue;
     p_audioDev = audioDev;
+    p_playCtrl = playCtrl;
     frameDelayMs = (fps > 0) ? (1000.0 / fps) : 40.0;
 
 }
@@ -172,6 +173,16 @@ void TVideoThread::init(TDecode *decode, TPacketQueue *queue, double fps, TAudio
 void TVideoThread::run()
 {
     for(;;){
+
+        if(p_playCtrl->stopRequest || isInterruptionRequested())
+            break;
+
+        //seek/重播 清理解码缓冲
+        if (p_playCtrl->takeFlush(&TMediaPlayCtrl::flushVideo)) {
+            p_decode->clear();
+        }
+
+
         TPacket *tp = nullptr;
         if(!p_packetQueue->pop(tp)){
             //pop 返回 false = 队列已停止（播完/关窗），必须退出。

@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QLabel>
 #include <QTimer>
+#include <QCloseEvent>
 
 
 class TDemuxThread;
@@ -42,12 +43,17 @@ private:
     QPushButton *backBtn = nullptr;//后退按钮
     QPushButton *playBtn = nullptr;//播放按钮
     QPushButton *forwardBtn = nullptr;//前进按钮
+    QPushButton *modelBtn = nullptr; //播放模式按钮
     QPushButton *soundBtn = nullptr;//静音/打开按钮
     QSlider *volumnSlider = nullptr;//音量大小拖动条
+    QPushButton *fullScreenBtn = nullptr; //全屏按钮
+    QPushButton *exitFullBtn = nullptr; //退出全屏按钮
 
 
     QTimer *timer = nullptr; //用来显示播放进度的时间
 
+
+    int modelIndex = 0; //记录播放模式图标索引
 
     bool playing = false;
     bool paused = false;
@@ -56,6 +62,13 @@ private:
     qreal volumnSize = 0.0;
     //记录是否静音
     bool isMute = false;
+
+
+    void closeAll();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 
 
@@ -71,13 +84,20 @@ public:
 private:
     Ui::tmediaplay *ui;
 
+
 private slots:
     void onUpdateClockValue();
     void onPlayBtnClicked(); //播放按钮点击槽函数
     void onStopBtnClicked(); //停止按钮点击槽函数
 
+
+    void onModelBtnClicked(); //播放模式按钮点击槽函数
+
     void onSoundBtnClicked(); //静音按钮点击槽函数
     void onVolumnSliderValChanged(int size); //音量大小调整槽函数
+
+    void onFullScreenBtnClicked(); //全屏按钮点击
+    void onExitFullBtnClicked();//退出全屏按钮点击
 
 };
 #endif // TMEDIAPLAY_H

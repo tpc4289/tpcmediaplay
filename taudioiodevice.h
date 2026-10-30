@@ -38,6 +38,8 @@ public:
     //注意：不能命名为 reset()，会与 QIODevice::reset() 虚函数返回类型冲突
     void clearBuffer();
 
+    void setPaused(bool p) { paused = p; }
+
 protected:
     //重载实现数据写类
     qint64 readData(char *data, qint64 maxlen) override;
@@ -55,6 +57,9 @@ private:
     std::deque<AVFrame *> frame_queue;
     //所取帧已经消费字节
     qint64 frame_pos = 0;
+
+
+    std::atomic<bool> paused{false};
 
     int64_t clock = CLOCK_NOT_READY; //最近一次消费位置(毫秒)
 
