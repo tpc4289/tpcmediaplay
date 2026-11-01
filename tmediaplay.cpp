@@ -135,7 +135,9 @@ tmediaplay::tmediaplay(QWidget *parent)
     durTimeLab = new QLabel("00:00 / --:--",this);
 
     //按钮样式
-    QString mediaBtnStyle = "QPushButton { border: none; background-color: transparent;}";
+    QString mediaBtnStyle = "QPushButton { border: none; background-color: transparent;border-radius: 6px;}"
+                            "QPushButton:hover { background-color: rgba(255,255,255,40); }"
+                            "QPushButton:pressed { background-color: rgba(255,255,255,70); }";
     //QString mediaBtnStyle = "QPushButton{width: 30px, height: 30px }";
     QSize btnIconSize(30,30);
     QSize btnSize(30,30);
@@ -143,6 +145,7 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     //停止播放按钮
     stopBtn = new QPushButton(this);
+    stopBtn->setToolTip("停止播放");
     stopBtn->setIcon(QIcon(":/images/stop.png"));
     stopBtn->setIconSize(btnIconSize);
     stopBtn->setFixedSize(btnSize);
@@ -158,6 +161,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     //播放按钮
     playBtn = new QPushButton(this);
     playBtn->setIcon(QIcon(":/images/play.png"));
+    playBtn->setToolTip("播放");
     playBtn->setFixedSize(50,50);
     playBtn->setIconSize(QSize(50,50));
     playBtn->setStyleSheet(mediaBtnStyle);
@@ -181,6 +185,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     //静音按钮
     soundBtn = new QPushButton(this);
     soundBtn->setIcon(QIcon(":/images/soundon.png"));
+    soundBtn->setToolTip("静音");
     soundBtn->setFixedSize(btnSize);
     soundBtn->setIconSize(btnIconSize);
     soundBtn->setStyleSheet(mediaBtnStyle);
@@ -190,15 +195,25 @@ tmediaplay::tmediaplay(QWidget *parent)
     volumnSlider->setRange(0,100);//设置值范围
     volumnSlider->setValue(100);//设置初始值
 
+    //打开文件按钮
+    openFileBtn = new QPushButton(this);
+    openFileBtn->setToolTip("打开文件");
+    openFileBtn->setIcon(QIcon(":/images/openfile.png"));
+    openFileBtn->setFixedSize(QSize(25,25));
+    openFileBtn->setIconSize(QSize(25,25));
+    openFileBtn->setStyleSheet(mediaBtnStyle);
+
     //全屏按钮
     fullScreenBtn = new QPushButton(this);
+    fullScreenBtn->setToolTip("全屏");
     fullScreenBtn->setIcon(QIcon(":/images/fullscreen.png"));
-    fullScreenBtn->setFixedSize(btnSize);
-    fullScreenBtn->setIconSize(btnIconSize);
+    fullScreenBtn->setFixedSize(QSize(25,25));
+    fullScreenBtn->setIconSize(QSize(25,25));
     fullScreenBtn->setStyleSheet(mediaBtnStyle);
 
     //退出全屏按钮
     exitFullBtn = new QPushButton(this);
+    exitFullBtn->setToolTip("退出全屏");
     exitFullBtn->setIcon(QIcon(":/images/exitfull.png"));
     exitFullBtn->setFixedSize(btnSize);
     exitFullBtn->setIconSize(btnIconSize);
@@ -223,6 +238,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     hBoxLayout1->addStretch();
     hBoxLayout1->addWidget(soundBtn);
     hBoxLayout1->addWidget(volumnSlider);
+    hBoxLayout1->addWidget(openFileBtn);
     hBoxLayout1->addWidget(fullScreenBtn);
     hBoxLayout1->addWidget(exitFullBtn);
 
@@ -412,8 +428,10 @@ void tmediaplay::onPlayBtnClicked()
         return;
     if(paused){
         playBtn->setIcon(QIcon(":/images/pause.png"));
+        playBtn->setToolTip("暂停");
     }else{
         playBtn->setIcon(QIcon(":/images/play.png"));
+        playBtn->setToolTip("播放");
     }
     paused = !paused;
     demuxThread->setPause(paused);
@@ -473,6 +491,11 @@ void tmediaplay::onVolumnSliderValChanged(int size)
     qreal volSize = size/100.0;
     audioThread->audioSink()->setVolume(volSize);
     volumnSize = volSize;
+}
+
+void tmediaplay::onOpenFileBtnClicked()
+{
+
 }
 
 void tmediaplay::onFullScreenBtnClicked()

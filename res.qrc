@@ -35,5 +35,6 @@
         <file>images/onecycle.png</file>
         <file>images/onestop.png</file>
         <file>images/random.png</file>
+        <file>images/openfile.png</file>
     </qresource>
 </RCC>

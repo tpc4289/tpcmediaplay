@@ -46,6 +46,7 @@ private:
     QPushButton *modelBtn = nullptr; //播放模式按钮
     QPushButton *soundBtn = nullptr;//静音/打开按钮
     QSlider *volumnSlider = nullptr;//音量大小拖动条
+    QPushButton *openFileBtn = nullptr;//打开文件按钮
     QPushButton *fullScreenBtn = nullptr; //全屏按钮
     QPushButton *exitFullBtn = nullptr; //退出全屏按钮
 
@@ -96,6 +97,7 @@ private slots:
     void onSoundBtnClicked(); //静音按钮点击槽函数
     void onVolumnSliderValChanged(int size); //音量大小调整槽函数
 
+    void onOpenFileBtnClicked();//打开文件按钮事件槽函数
     void onFullScreenBtnClicked(); //全屏按钮点击
     void onExitFullBtnClicked();//退出全屏按钮点击
 
