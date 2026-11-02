@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QMouseEvent>
 #include <QPushButton>
 #include <QStandardItemModel>
 
@@ -15,10 +16,67 @@
  *
  */
 
-TMediaPlayList::TMediaPlayList(QWidget *parent):QDialog(parent)
+//面板整体样式：深色半透明卡片风，与播放器控制条统一
+static const char *kPanelStyle = R"(
+TMediaPlayList {
+    background-color: rgba(24, 26, 32, 235);
+    border-left: 1px solid rgba(255,255,255,40);
+}
+QLabel#listTitle {
+    color: #eaeaea;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 6px 2px;
+}
+QListView {
+    background-color: rgba(0,0,0,0);
+    border: none;
+    outline: 0;
+    color: #d5d7db;
+    font-size: 12px;
+}
+QListView::item {
+    padding: 7px 8px;
+    border-radius: 6px;
+    margin: 1px 4px;
+}
+QListView::item:hover {
+    background-color: rgba(255,255,255,28);
+}
+QListView::item:selected {
+    background-color: rgba(33,150,243,90);
+    color: #ffffff;
+}
+QPushButton {
+    color: #d5d7db;
+    background-color: rgba(255,255,255,22);
+    border: 1px solid rgba(255,255,255,28);
+    border-radius: 6px;
+    padding: 5px 0px;
+    font-size: 12px;
+}
+QPushButton:hover {
+    background-color: rgba(255,255,255,45);
+    border-color: rgba(255,255,255,60);
+}
+QPushButton:pressed {
+    background-color: rgba(33,150,243,120);
+}
+)";
+
+TMediaPlayList::TMediaPlayList(QWidget *parent):QWidget(parent)
 {
     setWindowTitle("播放列表");
-    resize(200,400);
+    setFixedWidth(PanelWidth);
+    setAutoFillBackground(true);
+    setStyleSheet(QString::fromLatin1(kPanelStyle));
+    //作为主窗口的覆盖子控件，默认不可见（收起态）
+    hide();
+    //resize(200,400);
+
+    //顶部标题（显示文件数量）
+    titleLab = new QLabel("播放列表 (0)", this);
+    titleLab->setObjectName("listTitle");
 
     playListView = new QListView(this); //播放列表
     playListModel = new QStandardItemModel(this);
@@ -35,11 +93,15 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QDialog(parent)
     playListView->setDragDropMode(QAbstractItemView::InternalMove);
     playListView->setDefaultDropAction(Qt::MoveAction);
     playListView->setDropIndicatorShown(true);
+    playListView->setUniformItemSizes(true);
+    playListView->setWordWrap(true);
 
     //添加文件按钮
-    addFileBtn = new QPushButton("添加文件",this);
+    addFileBtn = new QPushButton("添加",this);
+    addFileBtn->setToolTip("向播放列表添加媒体文件");
     //删除文件按钮
     removeFileBtn = new QPushButton("移除",this);
+    removeFileBtn->setToolTip("移除勾选的文件");
     //上移文件按钮
     upFileBtn = new QPushButton("上移",this);
     //下移文件按钮
@@ -47,6 +109,8 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QDialog(parent)
 
     //按钮水平分布
     QHBoxLayout *btnHBoxLay = new QHBoxLayout();
+    btnHBoxLay->setContentsMargins(0, 0, 0, 0);
+    btnHBoxLay->setSpacing(6);
     btnHBoxLay->addWidget(addFileBtn);
     btnHBoxLay->addWidget(removeFileBtn);
     btnHBoxLay->addWidget(upFileBtn);
@@ -54,9 +118,16 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QDialog(parent)
 
     //主分布
     QVBoxLayout *mainVBoxLay = new QVBoxLayout(this);
+    mainVBoxLay->setContentsMargins(10, 8, 10, 8);
+    mainVBoxLay->setSpacing(6);
+    mainVBoxLay->addWidget(titleLab);
+    mainVBoxLay->addWidget(playListView, 1);
     mainVBoxLay->addLayout(btnHBoxLay);
-    mainVBoxLay->addWidget(playListView);
 
+    //滑出/缩回动画
+    slideAnim = new QPropertyAnimation(this, "pos", this);
+    slideAnim->setDuration(240);
+    slideAnim->setEasingCurve(QEasingCurve::OutCubic);
 
     //添加事件响应
     connect(addFileBtn, &QPushButton::clicked, this, &TMediaPlayList::onAddFileBtnClicked);
@@ -66,6 +137,9 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QDialog(parent)
 
     connect(playListView, &QListView::doubleClicked, this, &TMediaPlayList::onItemDoubleClicked);
 
+    //行数变化（添加/移除/排序）时同步标题计数
+    connect(playListModel, &QStandardItemModel::rowsInserted, this, [this]{ refreshTitle(); });
+    connect(playListModel, &QStandardItemModel::rowsMoved, this, [this]{ refreshTitle(); });
 
 
 }
@@ -80,26 +154,128 @@ QStringList TMediaPlayList::playListFiles() const
 
 }
 
-void TMediaPlayList::onAddFileBtnClicked()
+//返回列表行总数
+int TMediaPlayList::rowCount() const
 {
-    QString path = QDir::rootPath();
-    qDebug()<<"the path is "<< path;
-    QString dlgTitle = "打开一个媒体文件";
-    QString filter = "媒体文件(*.mp4 *.avi *.mkv);;所有文件(*.*)";
-    QStringList fileList = QFileDialog::getOpenFileNames(this, dlgTitle, path, filter);
-    //qDebug()<<fileList;
-    if(fileList.isEmpty()) return;
-    for(const QString &filePath:fileList){
-        //根据文件全路径获取文件名
+    return playListModel->rowCount();
+}
+
+//通过文件全路径名获取对应行数的索引
+int TMediaPlayList::indexOfPath(const QString &path) const
+{
+    for(int i = 0; i < playListModel->rowCount(); i++){
+        QStandardItem *item = playListModel->item(i);
+        if(item && item->data(FilePathRole).toString() == path)
+            return i;
+    }
+    return -1;
+}
+
+
+void TMediaPlayList::setCurrentPlayingRow(int row)
+{
+    //播放模式/当前项反馈，这里加高亮标记
+    m_currentRow = (row >= 0 && row < playListModel->rowCount()) ? row : -1;
+    applyPlayingStyle();
+    if(m_currentRow >= 0)
+        playListView->scrollTo(playListModel->index(m_currentRow, 0), QAbstractItemView::PositionAtCenter);
+}
+
+void TMediaPlayList::addFiles(const QStringList &files)
+{
+    //选择文件为空，直接返回
+    if(files.isEmpty())
+        return;
+    for(const QString &filePath : files){
+        //去重，同一路径不重复入队列
+        if(indexOfPath(filePath) >= 0)
+            continue;
         QFileInfo info(filePath);
         QStandardItem *item = new QStandardItem(info.fileName());
         item->setData(filePath, FilePathRole);
-
         //开启复选框
         item->setCheckable(true);
         item->setCheckState(Qt::Unchecked);
         playListModel->appendRow(item);
     }
+}
+
+//滑出：定位到窗口右缘内，动画移入
+void TMediaPlayList::slideOut()
+{
+    if(!parentWidget())
+        return;
+    m_slideOut = true;
+    const QSize pSize = parentWidget()->size();
+    const int h = qMax(0, pSize.height() - BottomReserved -4);
+    setFixedHeight(h);
+    raise();
+    show();
+    slideAnim->stop();
+    slideAnim->setStartValue(pos());
+    slideAnim->setEndValue(QPoint(pSize.width() - PanelWidth, 4));
+    slideAnim->start();
+}
+
+
+//缩回：动画移出窗口右缘后隐藏
+void TMediaPlayList::slideIn()
+{
+    if(!parentWidget())
+        return;
+    m_slideOut = false;
+    slideAnim->stop();
+    slideAnim->setStartValue(pos());
+    slideAnim->setEndValue(QPoint(parentWidget()->width(), y()));
+    slideAnim->start();
+    //动画结束后再 hide，避免中途消失闪烁
+    //先断开旧连接再挂新的，防止多次 slideIn 叠加 finished 槽
+    disconnect(slideAnim, &QPropertyAnimation::finished, this, nullptr);
+    connect(slideAnim, &QPropertyAnimation::finished, this, [this]{
+        if(!m_slideOut)
+            hide();
+    });
+
+}
+
+void TMediaPlayList::slideToggle()
+{
+    if(m_slideOut)
+        slideIn();
+    else
+        slideOut();
+}
+
+//父窗口尺寸变化时重算停靠位置（收起态贴在右边界外）
+void TMediaPlayList::reposition()
+{
+    if(!parentWidget())
+        return;
+    const QSize pSize = parentWidget()->size();
+    //顶部留 4px 边，底部避开进度条与控制条区域
+    const int h = qMax(0, pSize.height() - BottomReserved -4);
+    setFixedHeight(h);
+    const int xOut = pSize.width() - PanelWidth;
+    const int xHide = pSize.width(); //完全贴到窗口边界处
+    slideAnim->stop();
+    move(m_slideOut ? QPoint(xOut, 4) : QPoint(xHide, 4));
+}
+
+//面板内点击事件继续，不隐藏面板
+void TMediaPlayList::mousePressEvent(QMouseEvent *event)
+{
+    event->accept();
+}
+
+void TMediaPlayList::onAddFileBtnClicked()
+{
+    QString path = QDir::rootPath();
+    qDebug()<<"the path is "<< path;
+    QString dlgTitle = "添加媒体文件";
+    QString filter = "媒体文件(*.mp4 *.avi *.mkv *.mov);;所有文件(*.*)";
+    QStringList fileList = QFileDialog::getOpenFileNames(this, dlgTitle, path, filter);
+    //qDebug()<<fileList;
+    addFiles(fileList);
 
 }
 
@@ -138,6 +314,11 @@ void TMediaPlayList::onRemoveFileBtnClicked()
     if(rows.isEmpty()) return;
 
     for(int row:rows){
+        //正在播放的行被删掉时清除标记
+        if(row == m_currentRow)
+            m_currentRow = -1;
+        else if(row < m_currentRow)
+            --m_currentRow;
         playListModel->removeRow(row);
     }
 }
@@ -155,37 +336,44 @@ void TMediaPlayList::onUpFileBtnClicked()
     if(!currentIdx.isValid())
         return;
     int curRow = currentIdx.row();
-
-
     if(curRow <= 0)
         return;
-    QStandardItem *curItem = playListModel->item(curRow);
-    QStandardItem *prevItem = playListModel->item(curRow - 1);
-
-    if(!curItem || !prevItem)
-        return;
-
-    //交换显示文本
-    QString curText = curItem->text();
-    QString prevText = prevItem->text();
-    curItem->setText(prevText);
-    prevItem->setText(curText);
-    //交换文件路径
-    QVariant curPath = curItem->data(FilePathRole);
-    QVariant prevPath = prevItem->data(FilePathRole);
-
-    curItem->setData(prevPath, FilePathRole);
-    prevItem->setData(curPath, FilePathRole);
-
-    //交换勾选状态
-    Qt::CheckState curCheck = curItem->checkState();
-    Qt::CheckState prevCheck = prevItem->checkState();
-
-    curItem->setCheckState(prevCheck);
-    prevItem->setCheckState(curCheck);
-
-    //选中下一项
+    //moveRow 移动整行
+    QModelIndex parentIdx;
+    playListModel->moveRow(parentIdx, curRow, parentIdx, curRow - 1);
+    //同步当前播放标记
+    if(m_currentRow == curRow)
+        m_currentRow = curRow -1;
+    else if(m_currentRow = curRow - 1)
+        m_currentRow = curRow;
     playListView->setCurrentIndex(playListModel->index(curRow - 1, 0));
+    // QStandardItem *curItem = playListModel->item(curRow);
+    // QStandardItem *prevItem = playListModel->item(curRow - 1);
+
+    // if(!curItem || !prevItem)
+    //     return;
+
+    // //交换显示文本
+    // QString curText = curItem->text();
+    // QString prevText = prevItem->text();
+    // curItem->setText(prevText);
+    // prevItem->setText(curText);
+    // //交换文件路径
+    // QVariant curPath = curItem->data(FilePathRole);
+    // QVariant prevPath = prevItem->data(FilePathRole);
+
+    // curItem->setData(prevPath, FilePathRole);
+    // prevItem->setData(curPath, FilePathRole);
+
+    // //交换勾选状态
+    // Qt::CheckState curCheck = curItem->checkState();
+    // Qt::CheckState prevCheck = prevItem->checkState();
+
+    // curItem->setCheckState(prevCheck);
+    // prevItem->setCheckState(curCheck);
+
+    // //选中下一项
+    // playListView->setCurrentIndex(playListModel->index(curRow - 1, 0));
 
 
 }
@@ -208,39 +396,46 @@ void TMediaPlayList::onDownFileBtnClicked()
         return;
     int curRow = currentIdx.row();
     int lastRow = playListModel->rowCount() - 1;
-
     if(curRow >= lastRow)
         return;
-    QStandardItem *curItem = playListModel->item(curRow);
-    QStandardItem *nextItem = playListModel->item(curRow + 1);
+    QModelIndex parentIdx;
+    //moveRow 到 curRow+2 处即"下移一格"（目标插到 next 之后）
+    playListModel->moveRow(parentIdx, curRow, parentIdx, curRow + 2);
+    if(m_currentRow == curRow)
+        m_currentRow = curRow + 1;
+    else if(m_currentRow == curRow + 1)
+        m_currentRow = curRow;
+    playListView->setCurrentIndex(playListModel->index(curRow + 1, 0));
+    // QStandardItem *curItem = playListModel->item(curRow);
+    // QStandardItem *nextItem = playListModel->item(curRow + 1);
 
-    if(!curItem || !nextItem)
-        return;
+    // if(!curItem || !nextItem)
+    //     return;
 
-    //交换显示文本
-    QString curText = curItem->text();
-    QString nextText = nextItem->text();
-    curItem->setText(nextText);
-    nextItem->setText(curText);
-    //交换文件路径
-    QVariant curPath = curItem->data(FilePathRole);
-    QVariant nextPath = nextItem->data(FilePathRole);
+    // //交换显示文本
+    // QString curText = curItem->text();
+    // QString nextText = nextItem->text();
+    // curItem->setText(nextText);
+    // nextItem->setText(curText);
+    // //交换文件路径
+    // QVariant curPath = curItem->data(FilePathRole);
+    // QVariant nextPath = nextItem->data(FilePathRole);
 
-    curItem->setData(nextPath, FilePathRole);
-    nextItem->setData(curPath, FilePathRole);
+    // curItem->setData(nextPath, FilePathRole);
+    // nextItem->setData(curPath, FilePathRole);
 
-    //交换勾选状态
-    Qt::CheckState curCheck = curItem->checkState();
-    Qt::CheckState nextCheck = nextItem->checkState();
+    // //交换勾选状态
+    // Qt::CheckState curCheck = curItem->checkState();
+    // Qt::CheckState nextCheck = nextItem->checkState();
 
-    curItem->setCheckState(nextCheck);
-    nextItem->setCheckState(curCheck);
+    // curItem->setCheckState(nextCheck);
+    // nextItem->setCheckState(curCheck);
 
-    //选中下一项
-    playListView->setCurrentIndex(playListModel->index(curRow+1, 0));
+    // //选中下一项
+    // playListView->setCurrentIndex(playListModel->index(curRow+1, 0));
 
-    QModelIndex index = QModelIndex();
-    playListModel->moveRow(index, curRow, index, curRow + 2);
+    // QModelIndex index = QModelIndex();
+    // playListModel->moveRow(index, curRow, index, curRow + 2);
 }
 
 
@@ -253,7 +448,31 @@ void TMediaPlayList::onItemDoubleClicked(const QModelIndex &index)
     QString filePath = index.data(FilePathRole).toString();
     //如果文件不为空，发起播放文件信号
     if(!filePath.isEmpty()){
+        setCurrentPlayingRow(index.row());
         //等会发起
         emit playFileRequeted(filePath);
+    }
+}
+
+
+//刷新播放列表元素个数
+void TMediaPlayList::refreshTitle()
+{
+    titleLab->setText(QString("播放列表 (%1)").arg(playListModel->rowCount()));
+}
+//把当前播放行刷成"▶ 文件名"，并记录行号
+void TMediaPlayList::applyPlayingStyle()
+{
+    for(int i = 0; i < playListModel->rowCount(); i++){
+        QStandardItem *item = playListModel->item(i);
+        if(!item)
+            continue;
+        QString text = item->data(FilePathRole).toString();
+        //去掉旧前缀再按需加新前缀，避免多次调用叠加
+        if(text.startsWith(QChar(0x25B6))) // '▶'
+            text = text.mid(2);
+        if(i == m_currentRow)
+            item->setText(QString(QChar(0x25B6)) + " " + text);
+
     }
 }

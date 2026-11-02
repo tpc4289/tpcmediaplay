@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QTimer>
 #include <QCloseEvent>
+#include <QElapsedTimer>
 
 
 class TDemuxThread;
@@ -27,7 +28,18 @@ class tmediaplay : public QWidget
 {
     Q_OBJECT
 
+public:
+    //播放模式（与 modelBtn 图标顺序一致：播完停止→单曲循环→列表循环→随机播放）
+    enum PlayMode {
+        MODE_ONCE = 0,     //播完停止
+        MODE_ONE_CYCLE,    //单曲循环
+        MODE_ALL_CYCLE,    //列表循环
+        MODE_RANDOM,       //随机播放
+        MODE_COUNT
+    };
 private:
+
+
     TDemuxThread *demuxThread  = nullptr;
     TDecode *videoDecode  = nullptr;
     TDecode *audioDecode  = nullptr;
@@ -63,24 +75,41 @@ private:
 
     QTimer *timer = nullptr; //用来显示播放进度的时间
 
+    //EOF 后先等音频尾音播完再推进播放模式，避免片尾被掐断
+    QTimer *eofTimer = nullptr;   //轮询缓冲是否排空
+    QElapsedTimer eofElapsed;     //EOF 至今耗时
 
-    int modelIndex = 0; //记录播放模式图标索引
+    void advanceByMode();         //轮询满足后按模式执行下一步
+
+    int modelIndex = MODE_ONCE; //记录播放模式图标索引
 
     bool playing = false;
     bool paused = false;
 
+    //当前播放文件路径（换源/循环/随机都用得到）
+    QString currentUrl;
+
     //用来记录音量大小
-    qreal volumnSize = 0.0;
+    qreal volumnSize = 1.0;
     //记录是否静音
     bool isMute = false;
 
-
     void closeAll();
+
+    //按播放模式在列表中前进/后退一个文件并播放
+    void playIndex(int row);
+    void playAdjacent(bool next);
+    //切换进度条时间标签预览（拖动中实时显示）
+    void showSeekPreview(int permille);
+
 
 protected:
     void closeEvent(QCloseEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
+    //全局事件过滤：播放列表滑出后，点击任意其他地方收起
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 
 public:
@@ -103,6 +132,7 @@ private slots:
 
 
     void onModelBtnClicked(); //播放模式按钮点击槽函数
+    void onEndOfReached();    //当前文件播完：按播放模式决定下一步
 
     void onSoundBtnClicked(); //静音按钮点击槽函数
     void onVolumnSliderValChanged(int size); //音量大小调整槽函数

@@ -14,6 +14,7 @@
 #include <qaudiosink.h>
 #include <QDir>
 #include <QFileDialog>
+#include <QRandomGenerator>
 
 
 //根据输入时间，计算分钟和秒，并格式化输出
@@ -26,8 +27,73 @@ static QString fmtTime(int64_t ms)
         .arg(s % 60, 2, 10, QChar('0'));
 }
 
+//四种播放模式的图标与提示（索引与 PlayMode 一致）
+static const char *kModeIcons[4] = {
+    ":/images/onestop.png",
+    ":/images/onecycle.png",
+    ":/images/allcycle.png",
+    ":/images/random.png",
+};
 
-//窗口关闭
+
+static const char *kModeTips[4] = {
+    "播完停止（当前）",
+    "单曲循环（当前）",
+    "列表循环（当前）",
+    "随机播放（当前）",
+};
+
+
+//尾音播完后按播放模式执行下一步
+void tmediaplay::advanceByMode()
+{
+    if(!playing)
+        return;
+    //注意：EOF 到达时播放线程已自然收尾，这里先 closeAll 复位再开新源
+    switch (modelIndex) {
+    case MODE_ONE_CYCLE:
+        //单曲循环：重播当前文件
+        play(currentUrl);
+        break;
+    case MODE_ALL_CYCLE:
+        //列表循环：播下一个，到底回第一个；列表为空则重播当前
+        if(playList && playList->rowCount() > 0){
+            int row = playList->indexOfPath(currentUrl);
+            playIndex(row < 0 ? 0 : (row + 1) % playList->rowCount());
+        } else {
+            play(currentUrl);
+        }
+        break;
+    case MODE_RANDOM:
+        //随机播放：从列表随机取一个（多于一个时尽量不重复当前）
+        if(playList && playList->rowCount() > 0){
+            int cnt = playList->rowCount();
+            int row = 0;
+            if(cnt == 1){
+                row = 0;
+            } else {
+                int cur = playList->indexOfPath(currentUrl);
+                do {
+                    row = QRandomGenerator::global()->bounded(cnt);
+                } while(row == cur);
+            }
+            playIndex(row);
+        } else {
+            play(currentUrl);
+        }
+        break;
+    case MODE_ONCE:
+    default:
+        //播完停止
+        closeAll();
+        seekSlider->setValue(0);
+        durTimeLab->setText("00:00 / --:--");
+        playBtn->setIcon(QIcon(":/images/play.png"));
+        playBtn->setToolTip("播放");
+        break;
+    }
+}
+
 void tmediaplay::closeAll()
 {
     if(timer)
@@ -63,9 +129,59 @@ void tmediaplay::closeAll()
     paused = false;
 }
 
+//播放列表中第 row 个文件（越界自动回绕）
+void tmediaplay::playIndex(int row)
+{
+    if(!playList)
+        return;
+    const QStringList files = playList->playListFiles();
+    if(files.isEmpty())
+        return;
+    if(row < 0)
+        row = 0;
+    if(row >= files.size())
+        row = files.size() - 1;
+    playList->setCurrentPlayingRow(row);
+    play(files.at(row));
+}
+
+//上一个/下一个按钮：按当前播放模式取相邻文件
+void tmediaplay::playAdjacent(bool next)
+{
+    if(!playList)
+        return;
+    const int cnt = playList->rowCount();
+    if(cnt == 0)
+        return;
+    int cur = currentUrl.isEmpty() ? -1 : playList->indexOfPath(currentUrl);
+    int target = -1;
+    if(next){
+        if(modelIndex == MODE_RANDOM && cnt > 1){
+            do { target = QRandomGenerator::global()->bounded(cnt); } while(target == cur);
+        } else {
+            target = (cur < 0) ? 0 : (cur + 1) % cnt; //列表循环到尾部回头部
+        }
+    } else {
+        target = (cur < 0) ? cnt - 1 : (cur - 1 + cnt) % cnt; //头部往前回尾部
+    }
+    playIndex(target);
+}
+
+//拖动进度条过程中：实时把"目标时间点"显示在时间标签上，先给用户反馈
+void tmediaplay::showSeekPreview(int permille)
+{
+    if(!playing || !demuxThread)
+        return;
+    const int totalMs = demuxThread->totalMs();
+    if(totalMs <= 0)
+        return;
+    const int64_t targetMs = int64_t(totalMs) * permille / 1000;
+    durTimeLab->setText(fmtTime(targetMs) + " / " + fmtTime(totalMs));
+}
 void tmediaplay::closeEvent(QCloseEvent *event)
 {
-
+    //关窗前把线程全部收干净，避免退出时崩溃/卡死
+    closeAll();
     event->accept();
 }
 
@@ -80,6 +196,20 @@ void tmediaplay::keyPressEvent(QKeyEvent *event)
         return;
     }
     QWidget::keyPressEvent(event);
+}
+
+//窗口尺寸变化：播放列表面板重新贴右缘停靠
+void tmediaplay::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    if(playList)
+        playList->reposition();
+}
+
+//全局事件过滤：播放列表滑出后，点击任意其他地方收起
+bool tmediaplay::eventFilter(QObject *watched, QEvent *event)
+{
+
 }
 
 tmediaplay::tmediaplay(QWidget *parent)
@@ -155,13 +285,14 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     //后退按钮
     backBtn = new QPushButton(this);
+    backBtn->setToolTip("上一个");
     backBtn->setIcon(QIcon(":/images/back.png"));
     backBtn->setIconSize(btnIconSize);
     backBtn->setFixedSize(btnSize);
     backBtn->setStyleSheet(mediaBtnStyle);
 
     //播放按钮
-    playBtn = new QPushButton(this);
+    playBtn = new QPushButton(this);    
     playBtn->setIcon(QIcon(":/images/play.png"));
     playBtn->setToolTip("播放");
     playBtn->setFixedSize(50,50);
@@ -170,6 +301,7 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     //前进按钮
     forwardBtn = new QPushButton(this);
+    forwardBtn->setToolTip("下一个");
     forwardBtn->setIcon(QIcon(":/images/forward.png"));
     forwardBtn->setFixedSize(btnSize);
     forwardBtn->setIconSize(btnIconSize);
@@ -179,7 +311,8 @@ tmediaplay::tmediaplay(QWidget *parent)
     //播放模式按钮
     // = {":/images/fullcycle.png",":/images/onecycle.png",":/images/random.png",":/images/onestop.png"};
     modelBtn = new QPushButton(this);
-    modelBtn->setIcon(QIcon(":/images/onestop.png"));
+    modelBtn->setToolTip(kModeTips[MODE_ONCE]);
+    modelBtn->setIcon(QIcon(kModeTips[MODE_ONCE]));
     modelBtn->setFixedSize(btnSize);
     modelBtn->setIconSize(btnIconSize);
     modelBtn->setStyleSheet(mediaBtnStyle);
@@ -196,6 +329,8 @@ tmediaplay::tmediaplay(QWidget *parent)
     volumnSlider = new QSlider(Qt::Horizontal,this);
     volumnSlider->setRange(0,100);//设置值范围
     volumnSlider->setValue(100);//设置初始值
+    volumnSlider->setFixedWidth(90);
+    volumnSlider->setStyleSheet(sliderStyle);
 
     //播放列表按钮
     playListBtn = new QPushButton(this);
@@ -259,13 +394,6 @@ tmediaplay::tmediaplay(QWidget *parent)
 
 
 
-
-
-
-
-
-
-
     // 第一行拉伸，GL控件自动放大填满窗口
     gridLayout->setRowStretch(0, 1);
 
@@ -277,16 +405,33 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     timer = new QTimer(this);
 
+    //EOF 轮询：等音频尾音播完再推进播放模式（上限 5s 防时钟异常卡死）
+    eofTimer = new QTimer(this);
+    eofTimer->setInterval(100);
+    connect(eofTimer, &QTimer::timeout, this, [this]{
+        bool drained = true;
+        if(audioThread && !audioThread->isDisabled() && audioThread->audioDevice())
+            drained = audioThread->audioDevice()->isEmpty();
+        if(drained || eofElapsed.elapsed() > 5000){
+            eofTimer->stop();
+            advanceByMode();
+        }
+    });
 
-    //播放列表窗口
+    //播放列表窗口,主窗口右侧滑出/缩回（默认收起）
     playList = new TMediaPlayList(this);
-
+    playList->hide();
 
 
     connect(seekSlider,&QSlider::sliderReleased,this,[this]{mediaSeek(seekSlider->value());});
 
     connect(playBtn,&QPushButton::clicked,this, &tmediaplay::onPlayBtnClicked);
     connect(stopBtn,&QPushButton::clicked,this, &tmediaplay::onStopBtnClicked);
+
+    //前进/后退按钮：按播放模式在列表内切换上/下一个节目（原实现无任何功能）
+    connect(backBtn,&QPushButton::clicked,this,[this]{ playAdjacent(false); });
+    connect(forwardBtn,&QPushButton::clicked,this,[this]{ playAdjacent(true); });
+
 
     connect(modelBtn,&QPushButton::clicked,this, &tmediaplay::onModelBtnClicked);
 
@@ -309,7 +454,8 @@ tmediaplay::tmediaplay(QWidget *parent)
     //播放文件双击，进行事情驱动响应
     connect(playList, &TMediaPlayList::playFileRequeted, this, &tmediaplay::play);
 
-
+    //点击任意地方收起列表：监听全局鼠标事件，在 eventFilter 里判定
+    qApp->installEventFilter(this);
 
 }
 
@@ -318,20 +464,21 @@ tmediaplay::~tmediaplay()
     //关闭顺序很重要：先停"生产者"（解封装），再停"消费者"（音视频线程），
     //最后才释放它们引用的对象（解码器/队列/设备）。
     //原实现只 delete ui，关窗时线程还在跑并访问即将析构的对象 → 崩溃/退出卡死
-    if(demuxThread){
-        demuxThread->requestInterruption();
-        //停队列唤醒可能卡在 push/pop 上的线程
-        demuxThread->getVideoPackQueue()->stop();
-        demuxThread->getAudioPackQueue()->stop();
-        demuxThread->wait();
-    }
-    //线程对象析构内部会 requestInterruption + wait，这里显式先停更安全
-    delete videoThread;   videoThread = nullptr;
-    delete audioThread;   audioThread = nullptr;
-    delete demuxThread;   demuxThread = nullptr;
+    // if(demuxThread){
+    //     demuxThread->requestInterruption();
+    //     //停队列唤醒可能卡在 push/pop 上的线程
+    //     demuxThread->getVideoPackQueue()->stop();
+    //     demuxThread->getAudioPackQueue()->stop();
+    //     demuxThread->wait();
+    // }
+    // //线程对象析构内部会 requestInterruption + wait，这里显式先停更安全
+    // delete videoThread;   videoThread = nullptr;
+    // delete audioThread;   audioThread = nullptr;
+    // delete demuxThread;   demuxThread = nullptr;
 
-    delete videoDecode;   videoDecode = nullptr;
-    delete audioDecode;   audioDecode = nullptr;
+    // delete videoDecode;   videoDecode = nullptr;
+    // delete audioDecode;   audioDecode = nullptr;
+    closeAll();
 
     delete ui;
     ui = nullptr;
@@ -339,6 +486,13 @@ tmediaplay::~tmediaplay()
 
 void tmediaplay::play(const QString &url)
 {
+    //换源关键修复：如果已有播放，先彻底关闭上一路（停线程+释放对象），
+    //再开新文件。原实现直接覆盖指针：旧线程继续跑并泄漏，双线程抢队列，
+    //表现为"双击第二个文件不切换/卡死"
+    if(playing || demuxThread)
+        closeAll();
+
+    currentUrl = url;
     //解封装线程
     demuxThread = new TDemuxThread();
     //打开失败（路径错/无视频流）则不启动任何线程，界面保持黑底并给出提示
@@ -346,8 +500,14 @@ void tmediaplay::play(const QString &url)
         qDebug() << "open failed:" << url;
         delete demuxThread;
         demuxThread = nullptr;
+        currentUrl.clear();
         return;
     }
+
+    //新文件从头播：复位停止/暂停/seek 状态（closeAll 已删旧对象，这里保险起见再清一次）
+    demuxThread->getMediaPlayCtrl()->stopRequest = false;
+    demuxThread->getMediaPlayCtrl()->paused = false;
+
     TDemux *demux = demuxThread->getTDemux();
     TMediaPlayCtrl *playCtrl = demuxThread->getMediaPlayCtrl();
 
@@ -386,17 +546,22 @@ void tmediaplay::play(const QString &url)
     //这样视频线程随后就能拿到设备指针做同步
     audioThread = new TAudioThread();
     audioThread->init(audioDecode, demuxThread->getAudioPackQueue(), playCtrl);
-    qDebug() << "audio packet count is "<<demuxThread->getAudioPackQueue()->getCount();
+    //qDebug() << "audio packet count is "<<demuxThread->getAudioPackQueue()->getCount();
 
     //视频解码显示
     videoThread = new TVideoThread();
     //关键接线：把音频设备（主时钟）交给视频线程，sync() 才有依据
     videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps(), audioThread->audioDevice(), playCtrl);
-    qDebug() << "video packet count is "<<demuxThread->getVideoPackQueue()->getCount();
+    //qDebug() << "video packet count is "<<demuxThread->getVideoPackQueue()->getCount();
     //跨线程送显：TVideoThread 运行在工作线程、TVideoWidget 在主线程，
     //必须显式队列连接（参数按值拷贝）。不写会退化为 DirectConnection 风险写法，
     //在解码线程里直接调 update() 属于跨线程操作 GUI，未定义行为
     connect(videoThread, &TVideoThread::frameReady, videoWidget, &TVideoWidget::slotRepaint, Qt::QueuedConnection);
+
+
+    //文件播完：按播放模式决定停止/循环/下一个/随机
+    //emit 端在工作线程，必须队列连接回主线程
+    connect(demuxThread, &TDemuxThread::endOfReached, this, &tmediaplay::onEndOfReached, Qt::QueuedConnection);
 
     //启动顺序：先消费者（音/视频线程），再生产者（解封装），
     //避免解封装抢跑把 3MB 队列塞满后卡在背压上
@@ -408,6 +573,7 @@ void tmediaplay::play(const QString &url)
     //标注视频正在播放
     playing = true;
     playBtn->setIcon(QIcon(":/images/pause.png"));
+    playBtn->setToolTip("暂停");
     paused = false;
 
     timer->start(500);
@@ -415,7 +581,21 @@ void tmediaplay::play(const QString &url)
     isMute = false;
 
     //记录下音频音量大小
-    volumnSize = audioThread->audioSink()->volume();
+    // volumnSize = audioThread->audioSink()->volume();
+    //每路节目起播都按界面音量条重新下发音量，并把上次 seek/暂停遗留的时钟复位
+    if(QAudioSink *sink = audioThread->audioSink()){
+        sink->setVolume(volumnSlider->value()/100.0);
+        volumnSize = sink->volume();
+    }
+    //列表按钮高亮同步：标记当前播放行（双击列表时列表已自行标记过，这里兜底）
+    if(playList){
+        int row = playList->indexOfPath(url);
+        if(row >= 0)
+            playList->setCurrentPlayingRow(row);
+    }
+
+    //换源后时间标签先显示总时长占位
+    durTimeLab->setText(QString("--:-- / %1").arg(fmtTime(demuxThread->totalMs())));
 }
 
 //当拖动进度条时候，进行视频播放跳转
@@ -423,22 +603,32 @@ void tmediaplay::mediaSeek(int permille)
 {
     if(!playing)
         return;
+    if(paused){
+        paused = false;
+        playBtn->setIcon(QIcon(":/images/pause.png"));
+        playBtn->setToolTip("暂停");
+        demuxThread->setPause(false);
+    }
     demuxThread->seekTo(permille/1000.0);
 }
 
 void tmediaplay::onUpdateClockValue()
 {
-    if(!playing)
+    if(!playing || !demuxThread)
         return;
     qDebug()<<"show clock start!";
     //原子性获取音频主时钟
     int64_t clock = demuxThread->getMediaPlayCtrl()->audioClockMs.load();
     int totalMs = demuxThread->totalMs();
     if (clock == CLOCK_NOT_READY) {
-        durTimeLab->setText(QString("--:-- / %1").arg(fmtTime(totalMs)));
+        //durTimeLab->setText(QString("--:-- / %1").arg(fmtTime(totalMs)));
+        //seek/起播过渡期：拖拽预览优先，不能被时钟占位覆盖
+        if(!seekSlider->isSliderDown())
+            durTimeLab->setText(QString("--:-- / %1").arg(fmtTime(totalMs)));
         return;
     }
-    durTimeLab->setText(fmtTime(clock) + " / " + fmtTime(totalMs));
+    if(!seekSlider->isSliderDown())
+        durTimeLab->setText(fmtTime(clock) + " / " + fmtTime(totalMs));
     if (totalMs > 0 && !seekSlider->isSliderDown())
         seekSlider->setValue(int(clock * 1000 / totalMs));
 
@@ -449,60 +639,85 @@ void tmediaplay::onPlayBtnClicked()
 {
     if(!playing)
         return;
+    //seek 时若处于暂停，自动恢复播放，避免"跳过去后画面不动"的困惑
     if(paused){
+        paused = false;
         playBtn->setIcon(QIcon(":/images/pause.png"));
         playBtn->setToolTip("暂停");
     }else{
+        paused = true;
         playBtn->setIcon(QIcon(":/images/play.png"));
         playBtn->setToolTip("播放");
     }
-    paused = !paused;
     demuxThread->setPause(paused);
-
-    qDebug()<<"play button clicked";
+   // qDebug()<<"play button clicked";
 }
 //停止按钮点击响应事件
 void tmediaplay::onStopBtnClicked()
 {
     closeAll();
+    seekSlider->setValue(0);
+    durTimeLab->setText("00:00 / --:--");
+    playBtn->setIcon(QIcon(":/images/play.png"));
+    playBtn->setToolTip("播放");
 }
 
 //播放模式按钮点击事件
 void tmediaplay::onModelBtnClicked()
 {
-    switch (modelIndex) {
-    case 0:
-        modelBtn->setIcon(QIcon(":/images/onecycle.png"));
-        modelIndex++;
-        break;
-    case 1:
-        modelBtn->setIcon(QIcon(":/images/allcycle.png"));
-        modelIndex++;
-        break;
-    case 2:
-        modelBtn->setIcon(QIcon(":/images/random.png"));
-        modelIndex++;
-        break;
-    case 3:
-        modelBtn->setIcon(QIcon(":/images/onestop.png"));
-        modelIndex = 0;
-        break;
-    default:
-        break;
-    }
+    // switch (modelIndex) {
+    // case 0:
+    //     modelBtn->setIcon(QIcon(":/images/onecycle.png"));
+    //     modelIndex++;
+    //     break;
+    // case 1:
+    //     modelBtn->setIcon(QIcon(":/images/allcycle.png"));
+    //     modelIndex++;
+    //     break;
+    // case 2:
+    //     modelBtn->setIcon(QIcon(":/images/random.png"));
+    //     modelIndex++;
+    //     break;
+    // case 3:
+    //     modelBtn->setIcon(QIcon(":/images/onestop.png"));
+    //     modelIndex = 0;
+    //     break;
+    // default:
+    //     break;
+    // }
+    modelIndex = (modelIndex + 1) % MODE_COUNT;
+    modelBtn->setIcon(QIcon(kModeIcons[modelIndex]));
+    modelBtn->setToolTip(kModeTips[modelIndex]);
 }
 
+//当前文件播放结束：先等音频缓冲播完（片尾不截断），再按播放模式决定下一步
+void tmediaplay::onEndOfReached()
+{
+    if(!playing)
+        return;
+    //EOF 时视频线程已退出收尾，主 timer 继续跑也无意义，停掉防止读已结束线程
+    if(timer)
+        timer->stop();
+    //启动尾音排空轮询；若音频禁用/缓冲已空，100ms 内即推进
+    eofElapsed.restart();
+    eofTimer->start();
+}
 void tmediaplay::onSoundBtnClicked()
 {
+    QAudioSink *curSink = (audioThread && audioThread->audioSink()) ? audioThread->audioSink() : nullptr;
+    if(!curSink)
+        return; //无音频流时不处理，避免空指针崩溃（原实现直接解引用）
 
     if(isMute){
         soundBtn->setIcon(QIcon(":/images/soundon.png"));
-        audioThread->audioSink()->setVolume(volumnSize);
+        soundBtn->setToolTip("静音");
+        curSink->setVolume(volumnSize);
         //volumnSlider->setValue(volumnSize*100);
     }else{
         //记录静音前的音量值
-        volumnSize = audioThread->audioSink()->volume();
+        volumnSize = curSink->volume();
         soundBtn->setIcon(QIcon(":/images/soundoff.png"));
+        soundBtn->setToolTip("声音");
         audioThread->audioSink()->setVolume(0.0);
         //volumnSlider->setValue(0);
     }
@@ -511,14 +726,20 @@ void tmediaplay::onSoundBtnClicked()
 
 void tmediaplay::onVolumnSliderValChanged(int size)
 {
+    QAudioSink *curSink = (audioThread && audioThread->audioSink()) ? audioThread->audioSink() : nullptr;
     qreal volSize = size/100.0;
-    audioThread->audioSink()->setVolume(volSize);
     volumnSize = volSize;
+    if(curSink)
+        curSink->setVolume(volSize);
+    //音量滑到 0 联动静音图标
+    if(soundBtn)
+        soundBtn->setIcon(QIcon(volSize <= 0.001 ? ":/images/soundoff.png" : ":/images/soundon.png"));
 }
 
 void tmediaplay::onPlayListBtnClicked()
 {
-    playList->show();
+    //单击：滑出；再单击按钮同样收起（点其他地方也会收起，由 eventFilter 处理）
+    playList->slideToggle();
 }
 
 void tmediaplay::onOpenFileBtnClicked()
@@ -528,7 +749,11 @@ void tmediaplay::onOpenFileBtnClicked()
     QString dlgTitle = "打开一个媒体文件";
     QString filter = "媒体文件(*.mp4 *.avi *.mkv);;所有文件(*.*)";
     QString fileName = QFileDialog::getOpenFileName(this, dlgTitle, path, filter);
-    qDebug()<<fileName;
+    if(fileName.isEmpty())
+        return;
+    //打开的文件加入播放列表并立即播放（支持连续换源）
+    playList->addFiles(QStringList{fileName});
+    play(fileName);
 }
 
 void tmediaplay::onFullScreenBtnClicked()
@@ -536,6 +761,8 @@ void tmediaplay::onFullScreenBtnClicked()
     showFullScreen();
     fullScreenBtn->setVisible(false);
     exitFullBtn->setVisible(true);
+    if(playList)
+        playList->reposition();
 }
 
 void tmediaplay::onExitFullBtnClicked()
@@ -543,4 +770,6 @@ void tmediaplay::onExitFullBtnClicked()
     showNormal();
     fullScreenBtn->setVisible(true);
     exitFullBtn->setVisible(false);
+    if(playList)
+        playList->reposition();
 }
