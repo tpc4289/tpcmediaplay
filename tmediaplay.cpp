@@ -12,6 +12,8 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <qaudiosink.h>
+#include <QDir>
+#include <QFileDialog>
 
 
 //根据输入时间，计算分钟和秒，并格式化输出
@@ -195,6 +197,14 @@ tmediaplay::tmediaplay(QWidget *parent)
     volumnSlider->setRange(0,100);//设置值范围
     volumnSlider->setValue(100);//设置初始值
 
+    //播放列表按钮
+    playListBtn = new QPushButton(this);
+    playListBtn->setToolTip("播放列表");
+    playListBtn->setIcon(QIcon(":/images/playlist.png"));
+    playListBtn->setFixedSize(QSize(25,25));
+    playListBtn->setIconSize(QSize(25,25));
+    playListBtn->setStyleSheet(mediaBtnStyle);
+
     //打开文件按钮
     openFileBtn = new QPushButton(this);
     openFileBtn->setToolTip("打开文件");
@@ -238,6 +248,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     hBoxLayout1->addStretch();
     hBoxLayout1->addWidget(soundBtn);
     hBoxLayout1->addWidget(volumnSlider);
+    hBoxLayout1->addWidget(playListBtn);
     hBoxLayout1->addWidget(openFileBtn);
     hBoxLayout1->addWidget(fullScreenBtn);
     hBoxLayout1->addWidget(exitFullBtn);
@@ -267,6 +278,11 @@ tmediaplay::tmediaplay(QWidget *parent)
     timer = new QTimer(this);
 
 
+    //播放列表窗口
+    playList = new TMediaPlayList(this);
+
+
+
     connect(seekSlider,&QSlider::sliderReleased,this,[this]{mediaSeek(seekSlider->value());});
 
     connect(playBtn,&QPushButton::clicked,this, &tmediaplay::onPlayBtnClicked);
@@ -279,12 +295,19 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     connect(volumnSlider, &QSlider::valueChanged, this, &tmediaplay::onVolumnSliderValChanged);
 
+    connect(playListBtn, &QPushButton::clicked, this, &tmediaplay::onPlayListBtnClicked);
+
+    connect(openFileBtn, &QPushButton::clicked, this, &tmediaplay::onOpenFileBtnClicked);
+
     //全屏按钮点击事件驱动
     connect(fullScreenBtn, &QPushButton::clicked, this, &tmediaplay::onFullScreenBtnClicked);
     //退出全屏按钮点击事件驱动
     connect(exitFullBtn, &QPushButton::clicked, this, &tmediaplay::onExitFullBtnClicked);
 
     connect(timer, &QTimer::timeout, this, &tmediaplay::onUpdateClockValue);
+
+    //播放文件双击，进行事情驱动响应
+    connect(playList, &TMediaPlayList::playFileRequeted, this, &tmediaplay::play);
 
 
 
@@ -493,9 +516,19 @@ void tmediaplay::onVolumnSliderValChanged(int size)
     volumnSize = volSize;
 }
 
+void tmediaplay::onPlayListBtnClicked()
+{
+    playList->show();
+}
+
 void tmediaplay::onOpenFileBtnClicked()
 {
-
+    QString path = QDir::rootPath();
+    qDebug()<<"the path is "<< path;
+    QString dlgTitle = "打开一个媒体文件";
+    QString filter = "媒体文件(*.mp4 *.avi *.mkv);;所有文件(*.*)";
+    QString fileName = QFileDialog::getOpenFileName(this, dlgTitle, path, filter);
+    qDebug()<<fileName;
 }
 
 void tmediaplay::onFullScreenBtnClicked()

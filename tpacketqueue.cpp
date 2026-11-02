@@ -28,7 +28,13 @@ void TPacketQueue::push(TPacket *tp,int type, std::unique_lock<std::mutex> &lk)
     //type用来标注是视频还是音频 0代表视频，1代表音频
     int in_type = type;
     //判断是否已经满了，满了就阻塞
+
+    //额外响应 seek 请求：有 seek 挂起时立即唤醒并放行本包（随后被丢弃），
+    //让解封装线程回到循环头去执行跳转——这是"拖进度条响应慢"的关键修复：
+    //原来线程常阻塞在满等待里，seek 请求要等队列被消费者排空才被处理
     condNotFull.wait(lk, [this, in_size, in_type]{
+        if (seekReq && seekReq->load(std::memory_order_acquire) >= 0)
+            return true;
         if(in_type == 0)
             return size + in_size <= VIDEO_MAX_BYTES || !isRunning;
         else
@@ -41,10 +47,19 @@ void TPacketQueue::push(TPacket *tp,int type, std::unique_lock<std::mutex> &lk)
         delete tp;
         return;
     }
+
+    // seek 挂起：丢弃这个旧位置的包（EOF 占位包同理），调用方循环头会执行跳转
+    if (seekReq && seekReq->load(std::memory_order_acquire) >= 0) {
+        if(tp->pkt)
+            av_packet_free(&tp->pkt);
+        delete tp;
+        return;
+    }
+
      // 2. 入队并累加 size
     packQueue.push(tp);
     count += 1;
-    qDebug()<<"packet push, the size is:"<<in_size;
+    //qDebug()<<"packet push, the size is:"<<in_size;
     size += in_size;
     // 3. 通知消费者有数据了
     condNotEmpty.notify_one();
@@ -64,7 +79,7 @@ bool TPacketQueue::pop(TPacket *&tp)
     count -= 1;
     //EOF 包不能取 pkt->size
     //qDebug()<<"packet pop, the size is:"<<tp->pkt->size;
-    qDebug()<<"packet pop, the size is:"<<(tp && tp->pkt ? tp->pkt->size : 0);
+    //qDebug()<<"packet pop, the size is:"<<(tp && tp->pkt ? tp->pkt->size : 0);
     if(tp&&tp->pkt)
         size -= tp->pkt->size;
     condNotFull.notify_all();

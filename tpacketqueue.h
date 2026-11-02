@@ -28,6 +28,10 @@ private:
     int count = 0;//队列元素个数
     std::atomic<bool> isRunning{true};
 
+    //指向播放控制块的 seek 标志（千分位，-1 表示无请求）。
+    //作用：让阻塞在"队列满背压等待"里的解封装线程能被 seek 请求即时唤醒
+    std::atomic<int> *seekReq = nullptr;
+
 
 
 public:
@@ -51,6 +55,11 @@ public:
     void restart();
     //获取队列元素个数
     virtual int getCount();
+
+    //挂接 seek 标志指针（由 TDemuxThread 构造时设置）
+    void setSeekRequest(std::atomic<int> *flag) { seekReq = flag; }
+    //唤醒阻塞在"满等待"里的 push（UI 线程发起 seek 时调用）
+    void wakePushWaiters() { condNotFull.notify_all(); }
 
     std::mutex mux;   //供外部（解封装线程）持锁调用 push
 

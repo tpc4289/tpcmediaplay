@@ -223,7 +223,10 @@ void TAudioThread::run()
         if(p_playCtrl->takeFlush(&TMediaPlayCtrl::flushAudio)){
             p_decode->clear();
             p_audioDev->clearBuffer();
-            p_sink->reset();
+            //p_sink->reset();
+            //不再调用 p_sink->reset()：reset 会把输出停到 Idle 不再拉数据（seek 后可能无声）。
+            //设备缓冲清掉后 readData 自动补静音维持 Active，seek 能自然衔接
+            if(p_sample) p_sample->reset();   //清重采样器内部延迟样本，避免旧位置尾音
         }
 
         if(p_playCtrl->paused){

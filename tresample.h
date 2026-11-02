@@ -26,6 +26,8 @@ public:
     AVFrame *flush();
     //释放空间
     void close();
+
+    void reset();
 };
 
 #endif // TRESAMPLE_H

@@ -150,3 +150,19 @@ void TResample::close()
     }
     swrCtx = nullptr;
 }
+
+
+//seek 时丢弃内部延迟样本：先 close 再 init，配置保持不变
+void TResample::reset()
+{
+    if(!swrCtx)
+        return;
+    if(swr_is_initialized(swrCtx)){
+        swr_close(swrCtx);
+        if(swr_init(swrCtx) < 0){
+            qWarning() << "TResample::reset swr_init failed";
+            swr_free(&swrCtx);
+            swrCtx = nullptr;
+        }
+    }
+}

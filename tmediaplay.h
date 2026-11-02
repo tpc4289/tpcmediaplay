@@ -1,6 +1,8 @@
 #ifndef TMEDIAPLAY_H
 #define TMEDIAPLAY_H
 
+#include "tmediaplaylist.h"
+
 #include <QWidget>
 #include <QSlider>
 #include <QPushButton>
@@ -36,6 +38,11 @@ private:
     TAudioThread *audioThread  = nullptr;
 
 
+
+    //播放列表框
+    TMediaPlayList *playList = nullptr;
+
+
     //界面播放元素
     QSlider *seekSlider = nullptr; //进度条
     QLabel *durTimeLab = nullptr; //显示播放时间
@@ -46,9 +53,12 @@ private:
     QPushButton *modelBtn = nullptr; //播放模式按钮
     QPushButton *soundBtn = nullptr;//静音/打开按钮
     QSlider *volumnSlider = nullptr;//音量大小拖动条
+    QPushButton *playListBtn = nullptr;//播放列表按钮
     QPushButton *openFileBtn = nullptr;//打开文件按钮
     QPushButton *fullScreenBtn = nullptr; //全屏按钮
     QPushButton *exitFullBtn = nullptr; //退出全屏按钮
+
+
 
 
     QTimer *timer = nullptr; //用来显示播放进度的时间
@@ -97,6 +107,7 @@ private slots:
     void onSoundBtnClicked(); //静音按钮点击槽函数
     void onVolumnSliderValChanged(int size); //音量大小调整槽函数
 
+    void onPlayListBtnClicked();//播放列表打开文件列表
     void onOpenFileBtnClicked();//打开文件按钮事件槽函数
     void onFullScreenBtnClicked(); //全屏按钮点击
     void onExitFullBtnClicked();//退出全屏按钮点击

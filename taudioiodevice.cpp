@@ -58,8 +58,9 @@ bool TAudioIODevice::pushQueue(AVFrame *frame)
 
 qint64 TAudioIODevice::readData(char *data, qint64 maxlen)
 {
-
-    qDebug() << "readData maxlen:" << maxlen;
+    //本函数由 QAudioSink 高频回调（毫秒级），严禁在此打 qDebug：
+    //Windows 控制台 IO 会拖慢整条播放/拖拽链路
+    //qDebug() << "readData maxlen:" << maxlen;
     if(maxlen <= 0)
         return 0;
 

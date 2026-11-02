@@ -7,7 +7,11 @@ extern "C"{
 
 TDemuxThread::TDemuxThread(QObject *parent)
     : QThread{parent}
-{}
+{
+    //挂接 seek 标志：队列 push 背压等待也能被 seek 请求即时唤醒
+    videoPackQueue.setSeekRequest(&playCtrl.seekPermille);
+    audioPackQueue.setSeekRequest(&playCtrl.seekPermille);
+}
 
 TDemuxThread::~TDemuxThread()
 {
@@ -41,6 +45,10 @@ void TDemuxThread::run()
             m_demux.seek(pos);
             videoPackQueue.flush();        //丢弃旧位置的未消费包
             audioPackQueue.flush();
+            //关键修复：原实现 seek 后从不置位 flushVideo/flushAudio，
+            //解码器与音频输出缓冲里全是旧位置数据，要"播完旧货"才跳到新位置，
+            //表现即拖拽进度条后延迟好几秒；这里复位时钟并通知两侧消费者清缓冲
+            playCtrl.requestFlushAll();
         }
 
         //暂停：不读新包，队列水位保持不变
@@ -57,6 +65,10 @@ void TDemuxThread::run()
             //首先判断是否是因为到文件尾部了
             if(m_demux.getIsEndOf()){
                 qDebug() << "TDemuxThread EOF";
+                //EOF 与 seek 竞争保护：若此刻还有未处理的 seek 请求，
+                //回到循环头先执行跳转，不能误发"播完"信号把模式推进逻辑带偏
+                if(playCtrl.seekPermille.load(std::memory_order_acquire) >= 0)
+                    continue;
                 //向两条队列各压入一个 EOF 标志包（pkt==nullptr） ,type用来传入辨别为视频队列还是音频队列
                 auto pushEof = [&](TPacketQueue *queue, int type) {
                     TPacket *tp = new TPacket();   //pkt=nullptr, pts=-1
@@ -141,5 +153,8 @@ bool TDemuxThread::seekTo(double pos)
     if(p < 0) p = 0;
     if(p > 1000) p = 1000;
     playCtrl.seekPermille = p;
+    //唤醒可能正阻塞在"队列满"背压上的解封装线程，让 seek 立即被执行
+    videoPackQueue.wakePushWaiters();
+    audioPackQueue.wakePushWaiters();
     return true;
 }

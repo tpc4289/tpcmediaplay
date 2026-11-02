@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.19)
 project(tmediaplay LANGUAGES CXX)
 
-SET (FFMPEG_DIR "D:/developSoft/ffmpeg-8.1.2-full_build-shared")
-# SET (FFMPEG_DIR "E:/code/qt/lesson_code/ffmpeg")
+# SET (FFMPEG_DIR "D:/developSoft/ffmpeg-8.1.2-full_build-shared")
+SET (FFMPEG_DIR "E:/code/qt/lesson_code/ffmpeg")
 
 #必须加这个，不然资源文件里面的图片识别不到
 set(CMAKE_AUTORCC ON)
@@ -29,6 +29,7 @@ qt_add_executable(tmediaplay
     taudioiodevice.h taudioiodevice.cpp
     tmediaplayctrl.h
     res.qrc
+    tmediaplaylist.h tmediaplaylist.cpp
 )
 target_include_directories(tmediaplay PRIVATE ${FFMPEG_DIR}/include)
 

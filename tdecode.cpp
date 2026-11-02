@@ -86,9 +86,10 @@ int TDecode::send(AVPacket *pkt)
             //解码器满：克隆留存，等消费者取帧后 resend
             if (!pending){
                 pending = av_packet_clone(pkt);
-                qDebug()<<"decoder EAGAIN, cache pending pkt";
-            }else
-                qDebug()<<"decoder EAGAIN, pending alreary exist, drop pkt";
+                //qDebug()<<"decoder EAGAIN, cache pending pkt";
+            }
+                 //EAGAIN 是解码器满的正常背压，高频打日志会拖慢播放，不输出
+                //qDebug()<<"decoder EAGAIN, pending alreary exist, drop pkt";
         }else if(ret < 0){
             char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
             av_strerror(ret, buf, sizeof(buf) - 1);
