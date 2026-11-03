@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <QCloseEvent>
 #include <QElapsedTimer>
+#include <QGroupBox>
 
 
 class TDemuxThread;
@@ -37,9 +38,8 @@ public:
         MODE_RANDOM,       //随机播放
         MODE_COUNT
     };
+
 private:
-
-
     TDemuxThread *demuxThread  = nullptr;
     TDecode *videoDecode  = nullptr;
     TDecode *audioDecode  = nullptr;
@@ -49,19 +49,18 @@ private:
     //音频线程重采样播放
     TAudioThread *audioThread  = nullptr;
 
-
-
-    //播放列表框
+    //播放列表面板（主窗口右侧滑出/缩回）
     TMediaPlayList *playList = nullptr;
 
 
     //界面播放元素
+    QGroupBox *mediaGroupBox = nullptr; //视频播放控制区域
     QSlider *seekSlider = nullptr; //进度条
     QLabel *durTimeLab = nullptr; //显示播放时间
     QPushButton *stopBtn = nullptr;//停止播放按钮
-    QPushButton *backBtn = nullptr;//后退按钮
+    QPushButton *backBtn = nullptr;//上一个按钮
     QPushButton *playBtn = nullptr;//播放按钮
-    QPushButton *forwardBtn = nullptr;//前进按钮
+    QPushButton *forwardBtn = nullptr;//下一个按钮
     QPushButton *modelBtn = nullptr; //播放模式按钮
     QPushButton *soundBtn = nullptr;//静音/打开按钮
     QSlider *volumnSlider = nullptr;//音量大小拖动条
@@ -71,9 +70,20 @@ private:
     QPushButton *exitFullBtn = nullptr; //退出全屏按钮
 
 
-
-
     QTimer *timer = nullptr; //用来显示播放进度的时间
+
+
+    //控件自动隐藏：打开播放器 2 秒后只剩视频画面；
+    //鼠标在窗口内移动立即重现控制条，静止 2 秒后再次收起
+    QTimer *autoHideTimer = nullptr;
+    bool controlsVisible = true;
+    void mainBoxGroupHideTimer();//播放控制条自动显示和隐藏函数
+    void showControls();
+    void hideControls();
+    void restartAutoHide();
+    void tryAutoHide();             //定时到点：有交互迹象则续期，否则收起
+
+
 
     //EOF 后先等音频尾音播完再推进播放模式，避免片尾被掐断
     QTimer *eofTimer = nullptr;   //轮询缓冲是否排空
@@ -94,6 +104,7 @@ private:
     //记录是否静音
     bool isMute = false;
 
+    //关闭所有资源，停止线程
     void closeAll();
 
     //按播放模式在列表中前进/后退一个文件并播放
@@ -115,11 +126,15 @@ protected:
 public:
     explicit tmediaplay(QWidget *parent = nullptr);
     ~tmediaplay() override;
-    //打开并播放（在 show 之后调用）。重复调用不支持换源，仅播一次
+    //打开并播放（在 show 之后调用）。支持任意次换源：内部先彻底关闭上一路再打开新文件
     void play(const QString &url);
+
+    //外部文件入口：加入播放列表并立即播放（命令行/二次实例转交）
+    void openMediaFile(const QString &path);
 
     //视频进度拖动跳转
     void mediaSeek(int permille);
+
 
 private:
     Ui::tmediaplay *ui;

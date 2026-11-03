@@ -49,16 +49,16 @@ bool TAudioIODevice::pushQueue(AVFrame *frame)
     }
     //写入队列末尾
     frame_queue.push_back(clone);
-    //不要再在本类重新声明 readyRead 信号：原实现写了 signals: void readyRead()，
+    //不要再在本类重新声明 readyRead 信号：如果实现写了 signals: void readyRead()，
     //与基类 QIODevice::readyRead 同名遮蔽，emit 的是本类的，QAudioSink 连的是基类的，
-    //就绪通知可能永远到不了 → 无声。删除该声明后这里 emit 的就是基类信号。
+    //就绪通知可能永远到不了 → 无声。这里 emit 的就是基类信号。
     emit readyRead();
     return true;
 }
 
 qint64 TAudioIODevice::readData(char *data, qint64 maxlen)
 {
-    //本函数由 QAudioSink 高频回调（毫秒级），严禁在此打 qDebug：
+    //本函数由 QAudioSink 高频回调（毫秒级），正常运行严禁在此打 qDebug（测试可以）：
     //Windows 控制台 IO 会拖慢整条播放/拖拽链路
     //qDebug() << "readData maxlen:" << maxlen;
     if(maxlen <= 0)
@@ -112,7 +112,7 @@ qint64 TAudioIODevice::readData(char *data, qint64 maxlen)
             frame_pos = 0;
         }
     }
-    //关键修复：原实现队列空时 memset 后 return 0。pull 模式下返回 0 会让
+    //队列空时 memset 后 return 0。pull 模式下返回 0 会让
     //QAudioSink 判定"无数据可取"而停摆（Idle/Stopped 后再也不来），表现即完全无声。
     //改为不足部分补静音并如实返回 maxlen：声卡持续被喂数据保持 Active；
     //此时真实时钟不推进，视频端由 sync() 的停滞检测兜底。
@@ -130,9 +130,11 @@ qint64 TAudioIODevice::writeData(const char *data, qint64 len)
     return -1;
 }
 
+
+//清空队列数据
 void TAudioIODevice::clearBuffer()
 {
-    std::lock_guard<std::mutex> lock(mux);
+    std::lock_guard<std::mutex> lock(mux); //加锁
     while(!frame_queue.empty()){
         av_frame_free(&frame_queue.front());
         frame_queue.pop_front();
@@ -142,6 +144,7 @@ void TAudioIODevice::clearBuffer()
 
 }
 
+//判断队列是否为空
 bool TAudioIODevice::isEmpty()
 {
     std::lock_guard<std::mutex> lock(mux);

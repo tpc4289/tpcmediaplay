@@ -9,10 +9,11 @@
 
 
 /*
- * 播放器播放列表类
+ * 播放器播放列表类（内嵌在播放器主窗口右侧的覆盖面板）
+ * - 点击播放列表按钮：面板从右侧滑出
+ * - 点击面板以外任意区域：面板滑回收起
  * 实现播放列表的查看，文件的添加，删除，拖动等
  * 播放器可以根据播放列表实现单文件播放，循环播放等
- *
  */
 class TMediaPlayList : public QWidget
 {
@@ -28,15 +29,15 @@ public:
 
     //把某行标记成“正在播放”（前缀符号+高亮色），row传-1清除所有标记
     void setCurrentPlayingRow(int row);
+    //获取当前正在播放文件的列表行数
     int currentPlayingRow() const { return m_currentRow; }
-
 
     //向列表批量添加文件（打开文件按钮/拖文件进面板复用）
     void addFiles(const QStringList &files);
 
     //动画开关
     bool isSlideOut() const { return m_slideOut; }
-    void slideOut();
+    void slideOut(); //从右侧滑出
     void slideIn(); //缩回右侧
     void slideToggle(); //切换
 
@@ -77,10 +78,15 @@ private:
 
     bool m_slideOut = false;
     int m_currentRow = -1;
+    //当前播放项以“文件路径”为准而非行号：
+    //上移/下移/拖拽重排都会让行号漂移，存行号必然错位
+    QString m_currentPath;
 
 
     void refreshTitle();
     void applyPlayingStyle(); //把当前播放行刷成高亮文本
+    void moveCurrentRow(int delta); //当前选中行上移(-1)/下移(+1)，take+insert 真实移动整行
+
 
 
     enum ItemRole{

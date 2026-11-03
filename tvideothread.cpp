@@ -97,6 +97,20 @@ void TVideoThread::drainFrames()
 //音画同步：睡到音频时钟追上本帧 pts。返回 false 表示该帧严重落后，应丢弃
 bool TVideoThread::sync(int64_t pts)
 {
+    //暂停：直接停在这里等恢复，画面立即定住。
+    //如果只靠"音频时钟冻结"间接停画：本函数仍会 msleep 后继续显示，
+    //且下方停滞检测连续 20 帧同值就切回按帧率自走，
+    //表现为按暂停后画面慢动作继续跑、甚至直接恢复正常速度（暂停延迟的主因）
+    if(p_playCtrl && p_playCtrl->paused){
+        while(p_playCtrl->paused && !p_playCtrl->stopRequest && !isInterruptionRequested()){
+            msleep(10);
+        }
+        //恢复后重定节拍与时钟停滞基准：
+        //否则 paceTimer 里带着暂停那段时间的旧 elapsed，会把攒下的时长一口气睡完/丢帧
+        paceTimer.invalidate();
+        lastClock = CLOCK_NOT_READY;
+        clockStallCount = 0;
+    }
     if(pts < 0){
         //pts 不可用（个别流没给）：退化为按帧率播
         paceByFrameRate();
@@ -115,7 +129,7 @@ bool TVideoThread::sync(int64_t pts)
 
     if(diff < SYNC_DROP_MS){
         //落后音频太多：这一帧显示出来也只是闪一下，丢掉
-        qDebug() << "video drop frame, pts="<<pts<<" clock="<<clock<<" diff="<<diff;
+        //qDebug() << "video drop frame, pts="<<pts<<" clock="<<clock<<" diff="<<diff;
         return false;
     }
 

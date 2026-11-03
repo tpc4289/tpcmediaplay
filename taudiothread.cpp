@@ -41,7 +41,7 @@ TAudioThread::~TAudioThread()
 
 //组装：解码器 + 队列 + 创建并启动音频设备
 //（在 GUI 线程调用：那里有事件循环，QAudioSink 的状态通知与取数据调度才可靠；
-// 原实现放在 run() 里，覆写的 run 没有 exec()，sink 容易停在 Idle 不再拉数据 → 无声）
+// 初始化数据别放在 run() 里，覆写的 run 没有 exec()，sink 容易停在 Idle 不再拉数据 → 无声）
 void TAudioThread::init(TDecode *decode, TPacketQueue *queue, TMediaPlayCtrl *playCtrl)
 {
     p_decode = decode;
@@ -77,9 +77,9 @@ void TAudioThread::init(TDecode *decode, TPacketQueue *queue, TMediaPlayCtrl *pl
     }
 
     p_sink = new QAudioSink(dev, fmt);
-    connect(p_sink, &QAudioSink::stateChanged, this, [](QtAudio::State s) {
-        qDebug() << "sink state changed:" << int(s);
-    }, Qt::QueuedConnection);
+    // connect(p_sink, &QAudioSink::stateChanged, this, [](QtAudio::State s) {
+    //     qDebug() << "sink state changed:" << int(s);
+    // }, Qt::QueuedConnection);
     p_sink->start(p_audioDev);
     if(p_sink->error() != QtAudio::NoError){
         qWarning()<<"TAudioThread: sink start failed, err="<<int(p_sink->error());
@@ -228,16 +228,22 @@ void TAudioThread::run()
             //设备缓冲清掉后 readData 自动补静音维持 Active，seek 能自然衔接
             if(p_sample) p_sample->reset();   //清重采样器内部延迟样本，避免旧位置尾音
         }
-
+        //暂停处理：必须用 if/else 区分"进入暂停"与"仍在暂停/恢复"。
+        //两段都写 if，第二段 if(pausedHandled) 在第一段刚置 true 后
+        //同轮立即成立 → suspend 后马上 resume，声音根本没停（暂停延迟的主因之一）
         if(p_playCtrl->paused){
             if(!pausedHandled){
-                p_sink->suspend();
+                p_sink->suspend(); //停声卡拉数据，时钟随之冻结
                 p_audioDev->setPaused(true);
                 pausedHandled = true;
             }
+            //暂停中：不取新包，10ms 轮询等待恢复，保证 resume 及时
+            msleep(10);
+            continue;
         }
 
         if(pausedHandled){
+            //从暂停恢复：先 resume 声卡，再回到正常取包
             p_audioDev->setPaused(false);
             p_sink->resume();
             pausedHandled = false;
@@ -291,7 +297,7 @@ void TAudioThread::run()
         if(ret < 0){
             if(ret == AVERROR(EAGAIN)){
                 //解码器满：包已克隆进 pending。先收帧腾空间，再把 pending 送回。
-                //原实现直接 continue 且从不 resend，pending 永远堵在解码器入口
+                //如果直接 continue 且从不 resend，pending 永远堵在解码器入口
                 drainFrames();
                 while(p_decode->resend() == AVERROR(EAGAIN) && !isInterruptionRequested())
                     drainFrames();

@@ -72,7 +72,6 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QWidget(parent)
     setStyleSheet(QString::fromLatin1(kPanelStyle));
     //作为主窗口的覆盖子控件，默认不可见（收起态）
     hide();
-    //resize(200,400);
 
     //顶部标题（显示文件数量）
     titleLab = new QLabel("播放列表 (0)", this);
@@ -95,6 +94,7 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QWidget(parent)
     playListView->setDropIndicatorShown(true);
     playListView->setUniformItemSizes(true);
     playListView->setWordWrap(true);
+    playListView->setEditTriggers(QAbstractItemView::NoEditTriggers); //禁止编辑
 
     //添加文件按钮
     addFileBtn = new QPushButton("添加",this);
@@ -115,6 +115,14 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QWidget(parent)
     btnHBoxLay->addWidget(removeFileBtn);
     btnHBoxLay->addWidget(upFileBtn);
     btnHBoxLay->addWidget(downFileBtn);
+
+
+    //面板按钮不接受键盘焦点：否则点完"添加"后焦点留在按钮上，
+    //再按空格会重复触发同一按钮（与主窗口控制条同一类误触问题）。
+    //列表视图本身保留焦点，键盘上下选择文件不受影响
+    for(QPushButton *b : {addFileBtn, removeFileBtn, upFileBtn, downFileBtn}){
+        b->setFocusPolicy(Qt::NoFocus);
+    }
 
     //主分布
     QVBoxLayout *mainVBoxLay = new QVBoxLayout(this);
@@ -139,8 +147,10 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QWidget(parent)
 
     //行数变化（添加/移除/排序）时同步标题计数
     connect(playListModel, &QStandardItemModel::rowsInserted, this, [this]{ refreshTitle(); });
-    connect(playListModel, &QStandardItemModel::rowsMoved, this, [this]{ refreshTitle(); });
+    connect(playListModel, &QStandardItemModel::rowsRemoved, this, [this]{ refreshTitle(); });
+    connect(playListModel, &QStandardItemModel::rowsMoved, this, [this]{ refreshTitle(); applyPlayingStyle(); });
 
+    reposition();
 
 }
 
@@ -151,7 +161,17 @@ TMediaPlayList::~TMediaPlayList()
 
 QStringList TMediaPlayList::playListFiles() const
 {
-
+    //按行序返回全部文件路径
+    QStringList files;
+    for(int i = 0; i < playListModel->rowCount(); ++i){
+        QStandardItem *item = playListModel->item(i);
+        if(item){
+            QString path = item->data(FilePathRole).toString();
+            if(!path.isEmpty())
+                files.append(path);
+        }
+    }
+    return files;
 }
 
 //返回列表行总数
@@ -175,10 +195,18 @@ int TMediaPlayList::indexOfPath(const QString &path) const
 void TMediaPlayList::setCurrentPlayingRow(int row)
 {
     //播放模式/当前项反馈，这里加高亮标记
-    m_currentRow = (row >= 0 && row < playListModel->rowCount()) ? row : -1;
+    //上移/下移/拖拽重排/删除都会让行号漂移，存路径在任何重排后都能反查到正确行
+    m_currentPath.clear();
+    if(row >= 0 && row < playListModel->rowCount()){
+        QStandardItem *item = playListModel->item(row);
+        if(item)
+            m_currentPath = item->data(FilePathRole).toString();
+    }
     applyPlayingStyle();
-    if(m_currentRow >= 0)
+    const int curRow = currentPlayingRow();
+    if(curRow >= 0)
         playListView->scrollTo(playListModel->index(m_currentRow, 0), QAbstractItemView::PositionAtCenter);
+
 }
 
 void TMediaPlayList::addFiles(const QStringList &files)
@@ -196,8 +224,15 @@ void TMediaPlayList::addFiles(const QStringList &files)
         //开启复选框
         item->setCheckable(true);
         item->setCheckState(Qt::Unchecked);
+        //QStandardItem 默认带 ItemIsDropEnabled，InternalMove 拖放到
+        //另一条目"上面"时会被 QStandardItemModel 当成放入该条目的子行——
+        //列表只渲染顶层行，被嵌套的条目就"凭空消失"了。
+        //取消每个条目的可放置标志后，只允许落到行与行之间，杜绝吞项
+        item->setFlags(item->flags() & ~Qt::ItemIsDropEnabled);
         playListModel->appendRow(item);
     }
+    //新加入项可能被前缀逻辑漏掉，统一刷一遍
+    applyPlayingStyle();
 }
 
 //滑出：定位到窗口右缘内，动画移入
@@ -314,17 +349,17 @@ void TMediaPlayList::onRemoveFileBtnClicked()
     if(rows.isEmpty()) return;
 
     for(int row:rows){
-        //正在播放的行被删掉时清除标记
-        if(row == m_currentRow)
-            m_currentRow = -1;
-        else if(row < m_currentRow)
-            --m_currentRow;
         playListModel->removeRow(row);
     }
+    //正在播放的文件若被移除，清除播放标记（按路径判断，与行号无关）
+    if(!m_currentPath.isEmpty() && indexOfPath(m_currentPath) < 0)
+        m_currentPath.clear();
+    applyPlayingStyle();
 }
 
 void TMediaPlayList::onUpFileBtnClicked()
 {
+    moveCurrentRow(-1);
     //获取选中行
     // QModelIndex currentIdx = playListView->currentIndex();
     // if(!currentIdx.isValid() || currentIdx.row() <=0)
@@ -332,21 +367,25 @@ void TMediaPlayList::onUpFileBtnClicked()
     // int row = currentIdx.row();
     // playListModel->insertRow(row - 1, playListModel->takeItem(row));
     // playListView->setCurrentIndex(playListModel->index(row - 1, 0));
-    QModelIndex currentIdx = playListView->currentIndex();
-    if(!currentIdx.isValid())
-        return;
-    int curRow = currentIdx.row();
-    if(curRow <= 0)
-        return;
-    //moveRow 移动整行
-    QModelIndex parentIdx;
-    playListModel->moveRow(parentIdx, curRow, parentIdx, curRow - 1);
-    //同步当前播放标记
-    if(m_currentRow == curRow)
-        m_currentRow = curRow -1;
-    else if(m_currentRow = curRow - 1)
-        m_currentRow = curRow;
-    playListView->setCurrentIndex(playListModel->index(curRow - 1, 0));
+
+
+    // QModelIndex currentIdx = playListView->currentIndex();
+    // if(!currentIdx.isValid())
+    //     return;
+    // int curRow = currentIdx.row();
+    // if(curRow <= 0)
+    //     return;
+    // //moveRow 移动整行
+    // QModelIndex parentIdx;
+    // playListModel->moveRow(parentIdx, curRow, parentIdx, curRow - 1);
+    // //同步当前播放标记
+    // if(m_currentRow == curRow)
+    //     m_currentRow = curRow -1;
+    // else if(m_currentRow = curRow - 1)
+    //     m_currentRow = curRow;
+    // playListView->setCurrentIndex(playListModel->index(curRow - 1, 0));
+
+
     // QStandardItem *curItem = playListModel->item(curRow);
     // QStandardItem *prevItem = playListModel->item(curRow - 1);
 
@@ -380,6 +419,7 @@ void TMediaPlayList::onUpFileBtnClicked()
 
 void TMediaPlayList::onDownFileBtnClicked()
 {
+    moveCurrentRow(1);
     // QModelIndex currentIndex = playListView->currentIndex();
     // if (!currentIndex.isValid())
     //     return;
@@ -391,21 +431,25 @@ void TMediaPlayList::onDownFileBtnClicked()
     //     return;
     // playListModel->insertRow(row + 1, playListModel->takeItem(row));
     // playListView->setCurrentIndex(playListModel->index(row + 1, 0));
-    QModelIndex currentIdx = playListView->currentIndex();
-    if(!currentIdx.isValid())
-        return;
-    int curRow = currentIdx.row();
-    int lastRow = playListModel->rowCount() - 1;
-    if(curRow >= lastRow)
-        return;
-    QModelIndex parentIdx;
-    //moveRow 到 curRow+2 处即"下移一格"（目标插到 next 之后）
-    playListModel->moveRow(parentIdx, curRow, parentIdx, curRow + 2);
-    if(m_currentRow == curRow)
-        m_currentRow = curRow + 1;
-    else if(m_currentRow == curRow + 1)
-        m_currentRow = curRow;
-    playListView->setCurrentIndex(playListModel->index(curRow + 1, 0));
+
+
+    // QModelIndex currentIdx = playListView->currentIndex();
+    // if(!currentIdx.isValid())
+    //     return;
+    // int curRow = currentIdx.row();
+    // int lastRow = playListModel->rowCount() - 1;
+    // if(curRow >= lastRow)
+    //     return;
+    // QModelIndex parentIdx;
+    // //moveRow 到 curRow+2 处即"下移一格"（目标插到 next 之后）
+    // playListModel->moveRow(parentIdx, curRow, parentIdx, curRow + 2);
+    // if(m_currentRow == curRow)
+    //     m_currentRow = curRow + 1;
+    // else if(m_currentRow == curRow + 1)
+    //     m_currentRow = curRow;
+    // playListView->setCurrentIndex(playListModel->index(curRow + 1, 0));
+
+
     // QStandardItem *curItem = playListModel->item(curRow);
     // QStandardItem *nextItem = playListModel->item(curRow + 1);
 
@@ -460,19 +504,49 @@ void TMediaPlayList::refreshTitle()
 {
     titleLab->setText(QString("播放列表 (%1)").arg(playListModel->rowCount()));
 }
-//把当前播放行刷成"▶ 文件名"，并记录行号
+//重算所有行的显示文本：文件名 +（仅当前播放行加"▶ "前缀）。
+//文本统一由路径反推生成，天然不带历史前缀残留；
+//拖拽/上移下移重排后调用即可让 ▶ 自动跟到该文件的新行
 void TMediaPlayList::applyPlayingStyle()
 {
+    const int curRow = currentPlayingRow();
     for(int i = 0; i < playListModel->rowCount(); i++){
         QStandardItem *item = playListModel->item(i);
         if(!item)
             continue;
-        QString text = item->data(FilePathRole).toString();
+        const QString path = item->data(FilePathRole).toString();
+        const QString name = QFileInfo(path).fileName();
         //去掉旧前缀再按需加新前缀，避免多次调用叠加
-        if(text.startsWith(QChar(0x25B6))) // '▶'
-            text = text.mid(2);
-        if(i == m_currentRow)
-            item->setText(QString(QChar(0x25B6)) + " " + text);
-
+        if(i == curRow)
+            item->setText(QString(QChar(0x25B6)) + " " + name);
+        else
+            item->setText(name); //把移动后之前位置的播放符号去掉
     }
+}
+
+//当前选中行上移/下移一格：takeRow 摘除整行 + insertRow 挂回目标位置。
+//注意必须用 takeRow 而不是 takeItem：takeItem 只摘走该格的对象，
+//原位会残留一个空白行，随后 insertRow 又使行数 +1，
+//表现为"当前项连同下面所有项整体下移、列表凭空多出一行"（模型测试实证）。
+//上移/下移的目标行号在摘除后自动前移一位，正好落在相邻行前后，无需特殊处理。
+void TMediaPlayList::moveCurrentRow(int delta)
+{
+    QModelIndex currentIdx = playListView->currentIndex();
+    if(!currentIdx.isValid())
+        return;
+    const int row = currentIdx.row();
+    const int dst = row + delta;
+    const int last = playListModel->rowCount() - 1;
+    if(dst < 0 || dst > last)
+        return;
+    QList<QStandardItem*> itemList = playListModel->takeRow(row);
+    if(itemList.isEmpty())
+        return;
+    playListModel->insertRow(dst, itemList);
+
+    //选中跟随移动后的行
+    playListView->setCurrentIndex(playListModel->index(dst, 0));
+    //▶ 标记按路径存储，重排后自动指向新行，这里只需刷新文本前缀
+    applyPlayingStyle();
+    playListView->scrollTo(playListModel->index(dst, 0), QAbstractItemView::EnsureVisible);
 }

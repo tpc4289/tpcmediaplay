@@ -98,6 +98,9 @@ void tmediaplay::closeAll()
 {
     if(timer)
         timer->stop();
+    //换源/停止时终止待推进的 EOF 轮询，避免误触发模式推进再切一次歌
+    if(eofTimer)
+        eofTimer->stop();
     //1. 通知全部线程退出并停队列（唤醒阻塞在 pop/push 的读写线程）
     if(demuxThread)
         demuxThread->stopAll();
@@ -194,6 +197,10 @@ void tmediaplay::keyPressEvent(QKeyEvent *event)
         exitFullBtn->setVisible(false);
         event->accept();
         return;
+    }else if(event->key() == Qt::Key_Space){ //空格键点击事件，实现暂停播放
+        onPlayBtnClicked(); //直接调用播放按钮事件
+        event->accept();
+        return;
     }
     QWidget::keyPressEvent(event);
 }
@@ -206,10 +213,28 @@ void tmediaplay::resizeEvent(QResizeEvent *event)
         playList->reposition();
 }
 
-//全局事件过滤：播放列表滑出后，点击任意其他地方收起
+//全局事件过滤：
+//1) 播放列表滑出后，点击任意其他地方收起
+//2) 控制条隐藏时，鼠标在窗口内移动 → 立即重新显示控制条并续倒计时
 bool tmediaplay::eventFilter(QObject *watched, QEvent *event)
 {
-
+    if(event->type() == QEvent::MouseMove){
+        QWidget *w = qobject_cast<QWidget *>(watched);
+        if(w && w->window() == this){
+            if(!controlsVisible)
+                showControls();
+            else
+                restartAutoHide(); //任何移动都重置 2 秒计时
+        }
+    }
+    if(event->type() == QEvent::MouseButtonPress && playList && playList->isSlideOut()){
+        QWidget *w = qobject_cast<QWidget *>(watched);
+        //列表内部（含其子控件）的点击不收起；列表按钮自身交给 clicked/toggle 处理
+        if(w && w != playListBtn && !playList->isAncestorOf(w)){
+            playList->slideIn();
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 tmediaplay::tmediaplay(QWidget *parent)
@@ -222,7 +247,7 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     resize(900,640);
 
-
+    //集成openGL显示的widget类
     videoWidget = new TVideoWidget(this);
     QGridLayout *gridLayout = new QGridLayout(this);
     gridLayout->setContentsMargins(0,0,0,0);
@@ -232,7 +257,7 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     const QString sliderStyle = R"(
         QSlider{
-                background-color: rgba(0,0,0,70);
+                background-color: rgba(0,0,0,0);
                 height: 36px;
                 padding: 0px 15px;
             }
@@ -256,7 +281,8 @@ tmediaplay::tmediaplay(QWidget *parent)
     seekSlider->setRange(0,1000);
     seekSlider->setStyleSheet(sliderStyle);
 
-    QGroupBox *mediaGroupBox = new QGroupBox(this);
+    //播放按钮控制区域对象
+    mediaGroupBox = new QGroupBox(this);
     mediaGroupBox->setStyleSheet("QGroupBox{background-color: rgba(0,0,0,100);border: none;}");
 
     QHBoxLayout *hBoxLayout1 = new QHBoxLayout();
@@ -265,6 +291,7 @@ tmediaplay::tmediaplay(QWidget *parent)
 
     //播放进度
     durTimeLab = new QLabel("00:00 / --:--",this);
+    durTimeLab->setStyleSheet("QLabel{color:#e8e8e8;font-size:13px;}");
 
     //按钮样式
     QString mediaBtnStyle = "QPushButton { border: none; background-color: transparent;border-radius: 6px;}"
@@ -283,7 +310,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     stopBtn->setFixedSize(btnSize);
     stopBtn->setStyleSheet(mediaBtnStyle);
 
-    //后退按钮
+    //上一个按钮
     backBtn = new QPushButton(this);
     backBtn->setToolTip("上一个");
     backBtn->setIcon(QIcon(":/images/back.png"));
@@ -299,7 +326,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     playBtn->setIconSize(QSize(50,50));
     playBtn->setStyleSheet(mediaBtnStyle);
 
-    //前进按钮
+    //下一个按钮
     forwardBtn = new QPushButton(this);
     forwardBtn->setToolTip("下一个");
     forwardBtn->setIcon(QIcon(":/images/forward.png"));
@@ -312,7 +339,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     // = {":/images/fullcycle.png",":/images/onecycle.png",":/images/random.png",":/images/onestop.png"};
     modelBtn = new QPushButton(this);
     modelBtn->setToolTip(kModeTips[MODE_ONCE]);
-    modelBtn->setIcon(QIcon(kModeTips[MODE_ONCE]));
+    modelBtn->setIcon(QIcon(kModeIcons[MODE_ONCE]));
     modelBtn->setFixedSize(btnSize);
     modelBtn->setIconSize(btnIconSize);
     modelBtn->setStyleSheet(mediaBtnStyle);
@@ -366,6 +393,17 @@ tmediaplay::tmediaplay(QWidget *parent)
     exitFullBtn->setVisible(false);
 
 
+    //媒体控制按钮一律不接受键盘焦点（Qt::NoFocus）。
+    //Qt 默认按钮持有焦点时按空格=点击该按钮：点过"打开文件"后焦点留在按钮上，
+    //再按空格就会再次弹出文件对话框；回车还会触发默认按钮，同理误触
+    for(QPushButton *b : {stopBtn, backBtn, playBtn, forwardBtn, modelBtn,
+                           soundBtn, playListBtn, openFileBtn, fullScreenBtn, exitFullBtn}){
+        b->setFocusPolicy(Qt::NoFocus);
+    }
+    //进度条/音量条同样取消键盘焦点：鼠标拖动与滚轮不受影响，
+    //避免点击后焦点停留在滑杆上改变空格键的走向
+    seekSlider->setFocusPolicy(Qt::NoFocus);
+    volumnSlider->setFocusPolicy(Qt::NoFocus);
 
 
 
@@ -457,13 +495,84 @@ tmediaplay::tmediaplay(QWidget *parent)
     //点击任意地方收起列表：监听全局鼠标事件，在 eventFilter 里判定
     qApp->installEventFilter(this);
 
+    mainBoxGroupHideTimer(); //计时器，实现控件自动隐藏和显示
+
+}
+
+//计时器，实现控件自动隐藏和显示
+void tmediaplay::mainBoxGroupHideTimer(){
+    //控件自动隐藏：打开播放器 2 秒后只剩视频画面，鼠标移动立即重现
+    autoHideTimer = new QTimer(this);
+    autoHideTimer->setSingleShot(true);
+    connect(autoHideTimer, &QTimer::timeout, this, &tmediaplay::tryAutoHide);
+    autoHideTimer->start(2000);
+}
+//播放器控制区域显示控制
+void tmediaplay::showControls()
+{
+    if(controlsVisible){
+        restartAutoHide();
+        return;
+    }
+    controlsVisible = true;
+    if(mediaGroupBox)
+        mediaGroupBox->setVisible(true); //控制区域可见
+    if(seekSlider)
+        seekSlider->setVisible(true); //进度条可见
+    restartAutoHide(); //重新计时判断是否隐藏
+}
+//播放器控制区域隐藏控制
+void tmediaplay::hideControls()
+{
+    if(!controlsVisible)
+        return;
+    controlsVisible = false;
+    if(mediaGroupBox)
+        mediaGroupBox->setVisible(false); //控制区域隐藏
+    if(seekSlider)
+        seekSlider->setVisible(false); //进度条隐藏
+    //列表还开着就先收起，保证"只剩视频画面"
+    if(playList && playList->isSlideOut())
+        playList->slideIn();
+}
+//重新计时，2秒后触发tryAutoHide
+void tmediaplay::restartAutoHide()
+{
+    if(autoHideTimer)
+        autoHideTimer->start(2000);
+}
+//倒计时到点：仍在操作迹象（拖滑杆/列表展开/指针悬停控制条）则续期，否则收起
+void tmediaplay::tryAutoHide()
+{
+    if(!controlsVisible)
+        return;
+    if((seekSlider && seekSlider->isSliderDown()) || (volumnSlider && volumnSlider->isSliderDown())){
+        restartAutoHide();
+        return;
+    }
+    if(playList && playList->isSlideOut()){
+        restartAutoHide();
+        return;
+    }
+    //鼠标停在按钮条/进度条上：说明用户正要操作，保持可见
+    const QPoint p = mapFromGlobal(QCursor::pos());
+    if(rect().contains(p)){
+        for(QWidget *w = childAt(p); w; w = w->parentWidget()){
+            if(w == mediaGroupBox || w == seekSlider){
+                restartAutoHide();
+                return;
+            }
+        }
+    }
+    hideControls();
+
 }
 
 tmediaplay::~tmediaplay()
 {
     //关闭顺序很重要：先停"生产者"（解封装），再停"消费者"（音视频线程），
     //最后才释放它们引用的对象（解码器/队列/设备）。
-    //原实现只 delete ui，关窗时线程还在跑并访问即将析构的对象 → 崩溃/退出卡死
+    //只 delete ui，关窗时线程还在跑并访问即将析构的对象 → 崩溃/退出卡死
     // if(demuxThread){
     //     demuxThread->requestInterruption();
     //     //停队列唤醒可能卡在 push/pop 上的线程
@@ -487,7 +596,7 @@ tmediaplay::~tmediaplay()
 void tmediaplay::play(const QString &url)
 {
     //换源关键修复：如果已有播放，先彻底关闭上一路（停线程+释放对象），
-    //再开新文件。原实现直接覆盖指针：旧线程继续跑并泄漏，双线程抢队列，
+    //再开新文件。如果直接覆盖指针：旧线程继续跑并泄漏，双线程抢队列，
     //表现为"双击第二个文件不切换/卡死"
     if(playing || demuxThread)
         closeAll();
@@ -598,6 +707,23 @@ void tmediaplay::play(const QString &url)
     durTimeLab->setText(QString("--:-- / %1").arg(fmtTime(demuxThread->totalMs())));
 }
 
+
+//外部文件入口（双击关联文件/命令行传入/二次实例转交）：
+//入列表并立即换源播放——playing 时 play() 内部会先关旧再开新
+void tmediaplay::openMediaFile(const QString &path)
+{
+    if(path.isEmpty())
+        return;
+    playList->addFiles(QStringList{path});
+    play(path);
+    //正在滑出的列表面板刷新到新当前项
+    int row = playList->indexOfPath(path);
+    if(row >= 0)
+        playList->setCurrentPlayingRow(row);
+}
+
+
+
 //当拖动进度条时候，进行视频播放跳转
 void tmediaplay::mediaSeek(int permille)
 {
@@ -616,7 +742,7 @@ void tmediaplay::onUpdateClockValue()
 {
     if(!playing || !demuxThread)
         return;
-    qDebug()<<"show clock start!";
+    //qDebug()<<"show clock start!";
     //原子性获取音频主时钟
     int64_t clock = demuxThread->getMediaPlayCtrl()->audioClockMs.load();
     int totalMs = demuxThread->totalMs();
