@@ -6,7 +6,7 @@ extern "C"{
 
 //把ffmpeg内部的分数转换为浮点数
 static double r2d(AVRational r) {
-    return r.den == 0 ? 0 : (double)r.num / (double)r.den;
+    return r.den == 0 ? 0.0 : (double)r.num / (double)r.den;
 }
 //把以流 time_base 计的时间戳换算成毫秒；AV_NOPTS_VALUE 返回 -1
 static qint64 toMs(qint64 ts, AVRational ration){
@@ -31,11 +31,6 @@ TDemux::~TDemux()
     TDemux::close();
 }
 
-int TDemux::getTotalMs() const {return v_totalMs;}
-
-bool TDemux::getIsEndOf() const {return m_eof;}
-
-int TDemux::getFps() const {return v_fps;}
 
 //是否有音频流
 //与 getFps/getIsEndOf 同样不加锁：audio_idx 只在 open/close 中变更，
@@ -49,6 +44,10 @@ bool TDemux::hasAudio() const
 //解封装输入视频文件信息，获取到视频流和音频流信息
 bool TDemux::open(const char *url)
 {
+    //打开之前，先把一些数据复位。
+    v_openErr = OE_OK;
+    v_openErrDetail.clear();
+
     //参数设置的字典
     AVDictionary *dic = nullptr;
     //设置rtsp流以tcp协议打开
@@ -63,27 +62,31 @@ bool TDemux::open(const char *url)
         avformat_close_input(&p_formatCtx);
     //**打开媒体输入、读取文件头**的核心解封装函数，**只读容器头，不会打开解码器**FFmpeg
     int ret = avformat_open_input(&p_formatCtx, url, NULL, &dic);
-    //返回值小于0，说明打开失败，出现报错
+    //返回值小于0，说明打开失败，文件根本不是支持的媒体文件
     if(ret < 0){
         mux.unlock();
         char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
+        v_openErr = OE_OPEN_FAILED; //不支持的媒体文件;
         //输出报错
         av_strerror(ret, buf, sizeof(buf)-1);
+        v_openErrDetail = QString::fromLatin1(buf);
         qDebug()<<"open "<<url<<" failed: "<<buf;
         return false;
     }
     qDebug()<<"open "<<url<<" success!";
 
-    //读取视频流信息:很多 mp4 不开这一步拿不到完整 codecpar / 帧率 读若干 packet，补齐音视频流参数
+    //读取流信息:很多 mp4 不开这一步拿不到完整 codecpar / 帧率 读若干 packet，补齐音视频流参数
     ret = avformat_find_stream_info(p_formatCtx, NULL);
     //返回值小于0，说明读取流信息失败，出现报错
     if(ret < 0){
+        avformat_close_input(&p_formatCtx);
         mux.unlock();
+        v_openErr = OE_NO_STREAM_INFO; //流信息探测失败：文件损坏、截断或伪造扩展名。
         char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
         //输出报错
         av_strerror(ret, buf, sizeof(buf)-1);
+        v_openErrDetail = QString::fromLatin1(buf);
         qDebug()<<"avformat_find_stream_info error: "<<buf;
-        avformat_close_input(&p_formatCtx);
         return false;
     }
     //打印视频流详细信息,这一步不是必须的
@@ -100,6 +103,7 @@ bool TDemux::open(const char *url)
     video_idx = av_find_best_stream(p_formatCtx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     //没有视频流，我们输出提示，并返回false！
     if(video_idx < 0){
+        v_openErr = OE_NO_VIDEO; //容器能够打开但没有视频流（典型：纯音频 mp3/flac）——单独分类便于界面提示
         avformat_close_input(&p_formatCtx);
         mux.unlock();
         qDebug()<<"no video stream!";
@@ -111,8 +115,11 @@ bool TDemux::open(const char *url)
     v_width = videoStream->codecpar->width;
     //通过流参数信息获取视频高
     v_height = videoStream->codecpar->height;
-    //获取和计算帧率
+    //获取和计算帧率（保留小数：23.976 截断会让无音频兜底定拍偏慢；
     v_fps = r2d(videoStream->avg_frame_rate);
+    //VBR 的 MKV 常见 avg_frame_rate 为 0，回退 r_frame_rate）
+    if(v_fps <= 0)
+        v_fps = r2d(videoStream->r_frame_rate);
     //视频总时长,v_totalMs初始值为0
     if(p_formatCtx->duration > 0){
         v_totalMs = int(p_formatCtx->duration * 1000 / AV_TIME_BASE);
@@ -121,6 +128,7 @@ bool TDemux::open(const char *url)
     qDebug()<<"videoStream.duration is： "<<videoStream->duration;
     //如果视频大小有问题，我们也退出
     if(v_width <=0 || v_height <=0){
+        v_openErr = OE_BAD_SIZE;
         avformat_close_input(&p_formatCtx);
         mux.unlock();
         qDebug()<<"video have bad size!";
@@ -301,5 +309,21 @@ bool TDemux::isVideo(AVPacket *pack)
     bool ok = (video_idx >= 0 && pack->stream_index == video_idx);
     mux.unlock();
     return ok;
+}
+//根据解封装错误代码，获取具体报错内容
+QString TDemux::getOpenErrText() const
+{
+    switch (v_openErr) {
+    case OE_OPEN_FAILED:
+        return QString("无法打开文件（不是受支持的媒体文件或路径无效）：%1").arg(v_openErrDetail);
+    case OE_NO_STREAM_INFO:
+        return QString("文件信息探测失败（可能损坏/截断或扩展名与实际格式不符）：%1").arg(v_openErrDetail);
+    case OE_NO_VIDEO:
+        return QString("没有视频流（当前版本不支持纯音频播放）");
+    case OE_BAD_SIZE:
+        return "视频尺寸信息无效，文件可能损坏";
+    default:
+        return "未知错误";
+    }
 }
 

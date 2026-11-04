@@ -39,6 +39,9 @@ public:
     void setPause(bool p) { playCtrl.paused = p; }
     bool isPaused() const { return playCtrl.paused; }
 
+    //从TDemux中打开媒体文件的错误信息， openMedia 失败描述（界面提示用）
+    QString openErrText() const { return m_demux.getOpenErrText(); }
+
 private:
     //解封装对象
     TDemux m_demux;

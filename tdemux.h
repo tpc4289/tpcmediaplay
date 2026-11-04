@@ -20,21 +20,35 @@ private:
     int v_width = 0;
     //视频高度
     int v_height = 0;
-    //帧率
-    int v_fps = 0;
+    //帧率（double：23.976 这类分数帧率截断成 int 会让无音频文件的定拍偏慢）
+    double v_fps = 0;
     //视频总时长-毫秒
     int v_totalMs = 0;
     //文件结尾
     std::atomic<bool> m_eof{false};
+    //最近一次 open() 失败原因
+    int v_openErr = OE_OK;
+    //FFMPEG获取到的错误信息
+    QString v_openErrDetail;
 public:
+
+    //打开失败的具体类型：界面向用户提示"为什么播不了"
+    enum MediaOpenErr{
+        OE_OK = 0,
+        OE_OPEN_FAILED,      //容器都打不开：路径不存在/不是媒体文件
+        OE_NO_STREAM_INFO,   //流信息探测失败：文件损坏/截断
+        OE_NO_VIDEO,         //没有视频流（纯音频文件当前版本不支持）
+        OE_BAD_SIZE,         //视频尺寸无效
+    };
+
     TDemux();
     ~TDemux();
     //获取媒体总时长(ms)，RTSP 等直播流为 0
-    int getTotalMs() const;
+    int getTotalMs() const {return v_totalMs;}
     //上一次 read() 是否读到文件尾（区分 EOF 与网络抖动）
-    bool getIsEndOf() const;
+    bool getIsEndOf() const {return m_eof;}
     //获取fps
-    int getFps() const;
+    double getFps() const {return v_fps;}
 
     //是否存在音频流
     bool hasAudio() const;
@@ -57,6 +71,8 @@ public:
     virtual bool isAudio(AVPacket *pack);
     //判断是否是视频
     virtual bool isVideo(AVPacket *pack);
+    //根据解封装错误代码，获取具体报错内容
+    virtual QString getOpenErrText() const;
 
 };
 

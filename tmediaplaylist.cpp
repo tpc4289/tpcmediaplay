@@ -29,7 +29,7 @@ QLabel#listTitle {
     padding: 6px 2px;
 }
 QListView {
-    background-color: rgba(0,0,0,0);
+    background-color: rgba(25,0,0,200);
     border: none;
     outline: 0;
     color: #d5d7db;
@@ -307,7 +307,8 @@ void TMediaPlayList::onAddFileBtnClicked()
     QString path = QDir::rootPath();
     qDebug()<<"the path is "<< path;
     QString dlgTitle = "添加媒体文件";
-    QString filter = "媒体文件(*.mp4 *.avi *.mkv *.mov);;所有文件(*.*)";
+    QString filter = "媒体文件(*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.mpg *.mpeg *.ts *.m2ts "
+                     "*.webm *.m4v *.3gp *.rmvb *.vob *.asf *.ogv);;所有文件(*.*)";
     QStringList fileList = QFileDialog::getOpenFileNames(this, dlgTitle, path, filter);
     //qDebug()<<fileList;
     addFiles(fileList);

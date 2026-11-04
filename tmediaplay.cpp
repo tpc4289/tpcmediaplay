@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QRandomGenerator>
+#include <QMessageBox>
 
 
 //根据输入时间，计算分钟和秒，并格式化输出
@@ -244,6 +245,7 @@ tmediaplay::tmediaplay(QWidget *parent)
     ui->setupUi(this);
     //
     setWindowTitle("tpcmediaplay播放器");
+    setWindowIcon(QIcon(":/images/window.png"));
 
     resize(900,640);
 
@@ -607,9 +609,11 @@ void tmediaplay::play(const QString &url)
     //打开失败（路径错/无视频流）则不启动任何线程，界面保持黑底并给出提示
     if (!demuxThread->openMedia(url.toUtf8().constData())) {
         qDebug() << "open failed:" << url;
+        const QString errText = demuxThread->openErrText();
         delete demuxThread;
         demuxThread = nullptr;
         currentUrl.clear();
+        QMessageBox::warning(this, "文件打开错误", errText, QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
 
@@ -873,7 +877,8 @@ void tmediaplay::onOpenFileBtnClicked()
     QString path = QDir::rootPath();
     qDebug()<<"the path is "<< path;
     QString dlgTitle = "打开一个媒体文件";
-    QString filter = "媒体文件(*.mp4 *.avi *.mkv);;所有文件(*.*)";
+    QString filter = "媒体文件(*.mp4 *.avi *.mkv *.mov *.flv *.wmv *.mpg *.mpeg *.ts *.m2ts "
+                     "*.webm *.m4v *.3gp *.rmvb *.vob *.asf *.ogv);;所有文件(*.*)";
     QString fileName = QFileDialog::getOpenFileName(this, dlgTitle, path, filter);
     if(fileName.isEmpty())
         return;
