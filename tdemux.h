@@ -30,6 +30,18 @@ private:
     int v_openErr = OE_OK;
     //FFMPEG获取到的错误信息
     QString v_openErrDetail;
+    //考虑 SAR（像素宽高比）与旋转元数据后的"显示尺寸"：
+    //老 AVI/DVD 变形像素、手机竖拍视频靠这两个值才能不拉伸、不躺倒
+    double v_turnWidth = 0;
+    double v_turnHeight = 0;
+    //显示所需的逆时针 90° 旋转次数：0/1/2/3（源自 displaymatrix 元数据）
+    int v_rotate = 0;
+    //流级色彩范围标注（AVColorRange）：帧未携带时作为兜底
+    int v_colorRange = 0;
+    //流级色彩空间是否 BT.709（AVColorSpace）：手机/网络视频主流是 709，
+    //帧未标注时作为渲染矩阵选择的兜底依据
+    bool v_is709 = false;
+
 public:
 
     //打开失败的具体类型：界面向用户提示"为什么播不了"
@@ -73,6 +85,17 @@ public:
     virtual bool isVideo(AVPacket *pack);
     //根据解封装错误代码，获取具体报错内容
     virtual QString getOpenErrText() const;
+
+    //获取转换后实际显示的视频宽和高接口方法
+    virtual double getTurnWidth() const { return v_turnWidth; }
+    virtual double getTurnHeight() const { return v_turnHeight; }
+    //获取视频旋转次数
+    virtual int getVideoRotate() const { return v_rotate; }
+    //获取视频色彩范围（AVColorRange 枚举值，0=未标注）
+    int getColorRange() const { return v_colorRange; }
+    //流级色彩空间是否 BT.709（帧未标注时的兜底依据）
+    bool getIsBT709() const { return v_is709; }
+
 
 };
 

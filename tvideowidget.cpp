@@ -81,29 +81,88 @@ const char *vexString = R"(
 
 //但是 `sws_scale` 默认输出 **full range（0~255）** 的 YUV！
 //推荐，改 shader 适配 full range，sws 输出默认就是 full
+// const char *texString = R"(
+// #version 330 core
+// in vec2 textureOut;
+// uniform sampler2D tex_y;
+// uniform sampler2D tex_u;
+// uniform sampler2D tex_v;
+// out vec4 fragColor;
+// void main(void)
+// {
+//     vec3 yuv;
+//     yuv.x = texture(tex_y, textureOut).r;
+//     yuv.y = texture(tex_u, textureOut).r - 0.5;
+//     yuv.z = texture(tex_v, textureOut).r - 0.5;
+
+//     const mat3 yuv2rgb = mat3(
+//         1.0,      1.0,      1.0,
+//         0.0,     -0.34414,  1.772,
+//         1.402,   -0.71414,  0.0
+//     );
+//     vec3 rgb = yuv2rgb * yuv;
+//     fragColor = vec4(rgb, 1.0);
+// }
+// )";
+
+//片元 shader：YUV -> RGB。
+//uFullRange 决定用哪套矩阵：
+//  sws_scale 默认不改变数据范围——源是 limited(16-235) 输出还是 limited，
+//  源是 full(0-255)（游戏录制/屏幕录制常见）输出就是 full。
+//  渲染端必须用与源一致的矩阵：full 数据套 limited 矩阵会死黑裁边，
+//  limited 数据套 full 矩阵会整体发灰（本次多格式支持的常见问题）。
+//色彩空间同样要匹配：手机/网络视频主流是 BT.709，老 DVD/广电素材是 BT.601；
+//bt709 数据套 601 矩阵红蓝通道肉眼可辨偏色。uColorSpace: 0=BT.601, 1=BT.709
 const char *texString = R"(
 #version 330 core
 in vec2 textureOut;
 uniform sampler2D tex_y;
 uniform sampler2D tex_u;
 uniform sampler2D tex_v;
+uniform int uFullRange;
+uniform int uColorSpace;
 out vec4 fragColor;
 void main(void)
 {
-    vec3 yuv;
-    yuv.x = texture(tex_y, textureOut).r;
-    yuv.y = texture(tex_u, textureOut).r - 0.5;
-    yuv.z = texture(tex_v, textureOut).r - 0.5;
+    float Y = texture(tex_y, textureOut).r * 255.0;
+    float U = texture(tex_u, textureOut).r * 255.0 - 128.0;
+    float V = texture(tex_v, textureOut).r * 255.0 - 128.0;
 
-    const mat3 yuv2rgb = mat3(
-        1.0,      1.0,      1.0,
-        0.0,     -0.34414,  1.772,
-        1.402,   -0.71414,  0.0
-    );
-    vec3 rgb = yuv2rgb * yuv;
-    fragColor = vec4(rgb, 1.0);
+    //系数表按 (色彩空间 × 范围) 四种组合取
+    float ky, kr, kb, gu, gv, bu, bv;
+    if(uColorSpace == 1){
+        //BT.709
+        if(uFullRange == 1){
+            ky = 1.0; kr = 1.2814; kb = 1.8556;
+            gu = -0.1746; gv = -0.2966; bu = 0.5329; bv = 0.0;
+        }else{
+            ky = 1.1644; kr = 1.4746; kb = 1.8756;
+            gu = -0.1618; gv = -0.5736; bu = 0.3045; bv = 0.0;
+        }
+    }else{
+        //BT.601
+        if(uFullRange == 1){
+            ky = 1.0; kr = 1.402; kb = 1.772;
+            gu = -0.344136; gv = -0.714136; bu = 0.0; bv = 0.0;
+        }else{
+            ky = 1.164383; kr = 1.596027; kb = 2.017232;
+            gu = -0.391762; gv = -0.812968; bu = 0.0; bv = 0.0;
+        }
+    }
+    float yy = (uFullRange == 1) ? Y : ky * (Y - 16.0);
+    vec3 rgb = vec3(yy + kr * V,
+                    yy + gu * U + gv * V,
+                    yy + kb * U);
+    fragColor = vec4(clamp(rgb / 255.0, 0.0, 1.0), 1.0);
 }
 )";
+
+
+
+
+
+
+
 TVideoWidget::TVideoWidget(QWidget *parent) : QOpenGLWidget(parent) {
 
 }
@@ -113,8 +172,46 @@ TVideoWidget::~TVideoWidget()
     freeDatas();
 }
 
+//把 4 个顶点的 uv 按旋转次数重排后重传 VBO。
+//顶点顺序固定：BL(-1,-1) BR(1,-1) TL(-1,1) TR(1,1)
+//显示=存储图像逆时针转 rotQ*90°，采样坐标即对顶点做顺时针旋转再取（推导）：
+//  q0:(x,1-y)  q1:(y,x)  q2:(1-x,y)  q3:(1-y,1-x)
+//（1-y 的翻转变量来自 GL 纹理 v=0 在数据首行即图像顶部）
+void TVideoWidget::updateUvCoords(int rotateNum)
+{
+    //顶点 clip 坐标（固定）与对应显示归一化坐标 c=(x,y)：BL(0,0) BR(1,0) TL(0,1) TR(1,1)
+    static const float corners[4][2] = {{0,0},{1,0},{0,1},{1,1}};
+    static const float verts[4][2] = {{-1,-1},{1,-1},{-1,1},{1,1}};
+    float data[16];
+    for(int i = 0; i < 4; i++){
+        const float x = corners[i][0], y = corners[i][1];
+        float u, v;
+        switch (rotateNum & 3) {
+        case 1:  u = y;     v = x;     break;   //逆时针 90
+        case 2:  u = 1-x;   v = y;     break;   //180
+        case 3:  u = 1-y;   v = 1-x;   break;   //逆时针270(=顺时针90)
+        default: u = x;     v = 1-y;   break;   //不转
+        }
+        data[i*4+0] = verts[i][0];
+        data[i*4+1] = verts[i][1];
+        data[i*4+2] = u;
+        data[i*4+3] = v;
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(data), data, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
 void TVideoWidget::paintGL()
 {
+    //高 DPI 下 FBO 尺寸是逻辑尺寸 * devicePixelRatio，viewport 换算要带上
+    const qreal dpr = devicePixelRatio();
+    const int fbW = int(width() * dpr);
+    const int fbH = int(height() * dpr);
+
+    //先全屏黑色清掉 letterbox 区域
+    glViewport(0, 0, fbW, fbH);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     mux.lock();
     if(videoWidth <=0 || videoHeight <= 0){
@@ -139,9 +236,43 @@ void TVideoWidget::paintGL()
     memcpy(datas[1], src + ySize, size_t(uvSize));
     memcpy(datas[2], src + ySize + uvSize, size_t(uvSize));
 
+    //显示宽高比：解码线程已把 SAR（变形像素）与旋转（竖拍视频）折算进来；
+    //缺失时按存储比例回退（90/270 旋转的素材存储比≠显示比，回退也要换轴）
+    double ar;
+    if(curAspect > 0)
+        ar = curAspect;
+    else if(curRotate == 1 || curRotate == 3)
+        ar = double(videoHeight) / double(videoWidth);
+    else
+        ar = double(videoWidth) / double(videoHeight);
+    const bool fullRange = curFullRange;
+    //设置BT709值
+    const bool is709 = curIs709;
+    const int rotQ = curRotate;
+    const int drawW = videoWidth, drawH = videoHeight;
+
     mux.unlock();
 
+    //等比缩放 + 居中（letterbox）：窗口比画面更宽就顶底黑边，反之左右黑边
+    double contentW, contentH;
+    if(double(fbW) / double(fbH) > ar){
+        contentH = fbH;
+        contentW = fbH * ar;
+    }else{
+        contentW = fbW;
+        contentH = fbW / ar;
+    }
+    glViewport(int((fbW - contentW) / 2.0), int((fbH - contentH) / 2.0),
+               int(contentW), int(contentH));
+
     program.bind();
+
+    if(rotQ != loaderRotate || vboDirty){
+        updateUvCoords(rotQ);
+        loaderRotate = rotQ;
+        vboDirty = false;
+    }
+
 
     glBindVertexArray(vao);
 
@@ -161,6 +292,12 @@ void TVideoWidget::paintGL()
     glBindTexture(GL_TEXTURE_2D, texs[2]);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, cw, ch, GL_RED, GL_UNSIGNED_BYTE, datas[2]);
     glUniform1i(unis[2], 2);
+
+    if(uniFullRange >= 0)
+        glUniform1i(uniFullRange, fullRange ? 1 : 0);
+    //色彩空间
+    if(uniColorSpace >= 0)
+        glUniform1i(uniColorSpace, is709 ? 1 : 0);
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
@@ -194,6 +331,8 @@ void TVideoWidget::initializeGL()
     unis[0] = program.uniformLocation("tex_y");
     unis[1] = program.uniformLocation("tex_u");
     unis[2] = program.uniformLocation("tex_v");
+    uniFullRange = program.uniformLocation("uFullRange");
+    uniColorSpace = program.uniformLocation("uColorSpace");
     //用 VBO 上传坐标：立即模式（客户端指针）在 core profile 下非法，
     //Qt6 可能给到 core profile，那时 glDrawArrays 什么都不画 -> 黑屏
     // static const GLfloat coords[] = {
@@ -210,19 +349,20 @@ void TVideoWidget::initializeGL()
     // };
     //改成交叉模式
     // 交错布局：x,y,u,v 每 4 个 float 一组
-    static const GLfloat coords[] = {
-        -1.0f, -1.0f,  0.0f, 1.0f,
-        1.0f, -1.0f,  1.0f, 1.0f,
-        -1.0f,  1.0f,  0.0f, 0.0f,
-        1.0f,  1.0f,  1.0f, 0.0f,
-    };
+    // static const GLfloat coords[] = {
+    //     -1.0f, -1.0f,  0.0f, 1.0f,
+    //     1.0f, -1.0f,  1.0f, 1.0f,
+    //     -1.0f,  1.0f,  0.0f, 0.0f,
+    //     1.0f,  1.0f,  1.0f, 0.0f,
+    // };
 
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
 
     glGenBuffers(1, &vbo);
+    updateUvCoords(0);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(coords), coords, GL_STATIC_DRAW);
+    // glBufferData(GL_ARRAY_BUFFER, sizeof(coords), coords, GL_STATIC_DRAW);
 
     //glVertexAttribPointer(A_VER, 2, GL_FLOAT, 0, 0, (const void *)0);
     //交叉模式下 stride 为 4 个 float，纹理坐标偏移 2 个 float
@@ -242,8 +382,12 @@ void TVideoWidget::initializeGL()
 //只允许在 paintGL 中调用（有 current context）
 void TVideoWidget::resizeGL(int width, int height)
 {
-
+    Q_UNUSED(width);
+    Q_UNUSED(height);
+    //尺寸变化由 paintGL 里按 devicePixelRatio 重算 viewport，这里无需处理
 }
+
+
 
 void TVideoWidget::ensureTextures()
 {
@@ -288,7 +432,7 @@ void TVideoWidget::freeDatas()
 }
 
 //槽函数，实现获取帧的数据的重绘
-void TVideoWidget::slotRepaint(QByteArray yuv, int width, int height)
+void TVideoWidget::slotRepaint(QByteArray yuv, int width, int height, double dispAspect, int vRotate, bool fullRange, bool is709)
 {
     if(yuv.isEmpty() || width <=0 || height <= 0){
         qDebug()<<"slotRepaint get bad frame: width is "<<width<<",height is "<<height<<", yuv size is "<<yuv.size();
@@ -319,6 +463,14 @@ void TVideoWidget::slotRepaint(QByteArray yuv, int width, int height)
     curData = std::move(yuv);
     curWidth = width;
     curHeight = height;
+
+    //SAR/旋转/色彩范围随帧更新
+    if(vRotate != curRotate)
+        vboDirty = true;
+    curAspect = dispAspect;
+    curRotate = vRotate;
+    curFullRange = fullRange;
+    curIs709 = is709;
 
     mux.unlock();
 

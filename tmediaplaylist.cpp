@@ -4,6 +4,10 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QJsonArray>
 #include <QMouseEvent>
 #include <QPushButton>
 #include <QStandardItemModel>
@@ -146,10 +150,19 @@ TMediaPlayList::TMediaPlayList(QWidget *parent):QWidget(parent)
     connect(playListView, &QListView::doubleClicked, this, &TMediaPlayList::onItemDoubleClicked);
 
     //行数变化（添加/移除/排序）时同步标题计数
-    connect(playListModel, &QStandardItemModel::rowsInserted, this, [this]{ refreshTitle(); });
-    connect(playListModel, &QStandardItemModel::rowsRemoved, this, [this]{ refreshTitle(); });
-    connect(playListModel, &QStandardItemModel::rowsMoved, this, [this]{ refreshTitle(); applyPlayingStyle(); });
+    connect(playListModel, &QStandardItemModel::rowsInserted, this, [this]{ refreshTitle(); scheduleSave();});
+    connect(playListModel, &QStandardItemModel::rowsRemoved, this, [this]{ refreshTitle(); scheduleSave();});
+    connect(playListModel, &QStandardItemModel::rowsMoved, this, [this]{ refreshTitle(); applyPlayingStyle(); scheduleSave();});
 
+
+    //防抖保存定时器：变更后 400ms 合并写盘一次
+    saveTimer = new QTimer(this);
+    saveTimer->setSingleShot(true);
+    saveTimer->setInterval(400);
+    connect(saveTimer, &QTimer::timeout, this, [this]{ saveToJsonFile(); });
+
+    //启动恢复上次退出的播放列表与当前项（不自动开播，仅还原列表内容）
+    loadFromJsonFile();
     reposition();
 
 }
@@ -203,6 +216,7 @@ void TMediaPlayList::setCurrentPlayingRow(int row)
             m_currentPath = item->data(FilePathRole).toString();
     }
     applyPlayingStyle();
+    scheduleSave(); //当前播放项变化也要持久化，下次启动恢复 ▶
     const int curRow = currentPlayingRow();
     if(curRow >= 0)
         playListView->scrollTo(playListModel->index(m_currentRow, 0), QAbstractItemView::PositionAtCenter);
@@ -550,4 +564,83 @@ void TMediaPlayList::moveCurrentRow(int delta)
     //▶ 标记按路径存储，重排后自动指向新行，这里只需刷新文本前缀
     applyPlayingStyle();
     playListView->scrollTo(playListModel->index(dst, 0), QAbstractItemView::EnsureVisible);
+}
+//从本地playlist.json文件中加载播放文件列表
+bool TMediaPlayList::loadFromJsonFile()
+{
+    QFile playFile(jsonFilePath());//根据播放列表文件路径加载
+    if(!playFile.open(QIODevice::ReadOnly))
+        return false;
+    const QByteArray raw = playFile.readAll();
+    //使用完关闭
+    playFile.close();
+    QJsonParseError parseErr{};
+    const QJsonDocument doc = QJsonDocument::fromJson(raw, &parseErr);
+    //出错返回false
+    if(parseErr.error != QJsonParseError::NoError || !doc.isObject())
+        return false;
+    const QJsonObject root = doc.object();
+    if(root.value("version").toInt() < 1){
+        return false;
+    }
+
+    QStringList files;
+    for(const QJsonValue &v : root.value("files").toArray()){
+        if(v.isString())
+            files << v.toString();
+    }
+    //如果读取到为空，也返回false
+    if(files.isEmpty()){
+        return false;
+    }
+    m_loading = true;//恢复期间不回写
+    addFiles(files);
+    const QString cur = root.value("current").toString(); //记录当前播放的
+    if(!cur.isEmpty()&&indexOfPath(cur) >= 0){
+        m_currentPath = cur;
+        applyPlayingStyle();
+    }
+    m_loading = false;
+    return true;
+
+
+
+}
+//保存播放列表到本地文件
+bool TMediaPlayList::saveToJsonFile()
+{
+    //读取播放列表，放到jsonArray中
+    QJsonArray array;
+    for(const QString &file : playListFiles()){
+        array.append(file);
+    }
+    QJsonObject root;
+    root.insert("version", 1);
+    root.insert("files", array);
+    //存储上次正在播放的文件
+    root.insert("current", m_currentPath);
+
+    const QString target = jsonFilePath();
+    const QString tmp = target + ".tmp";
+    //在临时文件中操作，后续再覆盖原文件
+    {
+        QFile tmpFile(tmp);
+        if(!tmpFile.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return false;
+        tmpFile.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+        tmpFile.close();
+    }
+    //目标存在则先删（Windows 下 rename 不覆盖已存在文件）
+    if(QFile::exists(target))
+        QFile::remove(target);
+    return QFile::rename(tmp, target);
+}
+
+//请求防抖保存：任何列表变更后调用，400ms 内的多次变更合并为一次写盘。
+//加载恢复期间（m_loading）忽略，避免刚读出来又原样写回去
+void TMediaPlayList::scheduleSave()
+{
+    if(m_loading || !saveTimer)
+        return;
+    saveTimer->start();
 }

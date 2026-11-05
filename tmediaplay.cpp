@@ -607,6 +607,7 @@ void tmediaplay::play(const QString &url)
     //解封装线程
     demuxThread = new TDemuxThread();
     //打开失败（路径错/无视频流）则不启动任何线程，界面保持黑底并给出提示
+    //中文/生僻字路径的素材因此可以正常打开，这里必须保持 toUtf8
     if (!demuxThread->openMedia(url.toUtf8().constData())) {
         qDebug() << "open failed:" << url;
         const QString errText = demuxThread->openErrText();
@@ -665,6 +666,9 @@ void tmediaplay::play(const QString &url)
     videoThread = new TVideoThread();
     //关键接线：把音频设备（主时钟）交给视频线程，sync() 才有依据
     videoThread->init(videoDecode, demuxThread->getVideoPackQueue(), demux->getFps(), audioThread->audioDevice(), playCtrl);
+    //显示几何与色彩注入：SAR 校正后的显示宽高、旋转次数、流级色彩范围
+    //（渲染端据此 letterbox 等比缩放、旋转画面、选择 full/limited 矩阵
+    videoThread->setDisplayInfo(demux->getTurnWidth(), demux->getTurnHeight(), demux->getVideoRotate(), demux->getColorRange(), demux->getIsBT709());
     //qDebug() << "video packet count is "<<demuxThread->getVideoPackQueue()->getCount();
     //跨线程送显：TVideoThread 运行在工作线程、TVideoWidget 在主线程，
     //必须显式队列连接（参数按值拷贝）。不写会退化为 DirectConnection 风险写法，

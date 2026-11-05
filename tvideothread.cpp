@@ -86,10 +86,21 @@ void TVideoThread::drainFrames()
 
         QByteArray yuv;
         bool ret = frameToYuv(frame, w, h, yuv);
+        //色彩范围在 frame 释放前读出：帧级标注优先，未标注回退流级设置。
+        //sws 按 full range(0-255) 转出数据，渲染端必须用同范围矩阵，
+        //否则游戏录制等全范围素材会发灰、有限范围素材会死黑
+        //bt709 素材（手机/网络视频主流）套 601 矩阵红蓝偏差肉眼可辨
+        const int cr = (frame->color_range != AVCOL_RANGE_UNSPECIFIED) ? int(frame->color_range) : colorRange;
+        const bool fullRange = (cr == AVCOL_RANGE_JPEG);
+        const int cs = (frame->colorspace != AVCOL_SPC_UNSPECIFIED) ? int(frame->colorspace) : (defBT709 ? AVCOL_SPC_BT709 : AVCOL_SPC_BT470BG);
+        //BT.709（含 BT1361/xvYCC709 变体，头文件注释归并为同一枚举值）
+        const bool is709 = (cs == AVCOL_SPC_BT709);
+        const double aspect = (turnWidth > 0 && turnHeight > 0) ? turnWidth/turnHeight : double(w)/double(h);
+
         av_frame_free(&frame);
         if(!ret) continue;
 
-        emit frameReady(yuv, w, h);
+        emit frameReady(yuv, w, h, aspect, videoRotate, fullRange, is709);
 
     }
 }

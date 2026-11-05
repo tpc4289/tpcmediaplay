@@ -2,6 +2,7 @@
 #include <QDebug>
 extern "C"{
 #include <libavformat/avformat.h>
+#include <libavutil/display.h>
 }
 
 //把ffmpeg内部的分数转换为浮点数
@@ -15,6 +16,51 @@ static qint64 toMs(qint64 ts, AVRational ration){
     static const AVRational ms = {1, 1000};
     return av_rescale_q(ts, ration, ms);
 }
+
+
+//从视频流提取旋转元数据：displaymatrix 边数据（AV_PKT_DATA_DISPLAYMATRIX）。
+//注意版本差异：FFmpeg 7 及以下挂在 AVStream 上（av_stream_get_side_data），
+//本工程的 FFmpeg 8（libavformat 63）把它移到了 AVCodecParameters->coded_side_data，
+//且 av_stream_get_side_data 已删除——按旧字段写会编译失败。
+//老文件还可能只有 metadata 的 "rotate" 标签，作为回退。
+//返回"显示所需逆时针旋转角度"（0/90/180/270）
+static int streamRotateCCWDegrees(AVStream *st)
+{
+    if(!st || !st->codecpar)
+        return 0;
+    double theta = 0;
+    bool found = false;
+    for(int i = 0; i < st->codecpar->nb_coded_side_data; i++){
+        const AVPacketSideData *sd = &st->codecpar->coded_side_data[i];
+        if(sd->type == AV_PKT_DATA_DISPLAYMATRIX && sd->size >= 9 * (int)sizeof(int32_t)){
+            theta = av_display_rotation_get((const int32_t *)sd->data);
+            found = true;
+            break;
+        }
+    }
+    if(!found){
+        //回退：旧 mp4/mov 的 "rotate" metadata 标签（值即逆时针角度，可能是多位数）
+        AVDictionaryEntry *e = av_dict_get(st->metadata, "rotate", NULL, 0);
+        if(e){
+            bool ok = false;
+            theta = QString::fromUtf8(e->value).toDouble(&ok);
+            if(!ok) return 0;
+        }
+        else
+            return 0;
+    }
+    if(qIsNaN(theta))
+        return 0;
+    theta -= 360 * floor(theta / 360 + 0.9 / 360);
+    int deg = qRound(theta / 90.0) * 90;      //归一到 90° 整数倍
+    deg %= 360;
+    if(deg < 0)
+        deg += 360;
+    return deg;
+}
+
+
+
 
 TDemux::TDemux() {
 #if LIBAVFORMAT_VERSION_MAJOR < 58
@@ -47,6 +93,11 @@ bool TDemux::open(const char *url)
     //打开之前，先把一些数据复位。
     v_openErr = OE_OK;
     v_openErrDetail.clear();
+    v_turnWidth = 0;
+    v_turnHeight = 0;
+    v_rotate = 0;
+    v_colorRange = 0;
+    v_is709 = false;
 
     //参数设置的字典
     AVDictionary *dic = nullptr;
@@ -134,6 +185,37 @@ bool TDemux::open(const char *url)
         qDebug()<<"video have bad size!";
         return false;
     }
+
+    //====== 显示尺寸：SAR（像素宽高比）+ 旋转元数据 ======
+    //两类典型素材必须靠这两项才能正确显示：
+    //1) 变形像素：720x480 的老 AVI/DVD，存储宽高比≠显示宽高比，直接拉伸会变形；
+    //2) 手机竖拍：像素是横屏的，旋转 90° 元数据写在流里，不处理画面会躺倒。
+    //这里一次性算出最终"显示宽 x 显示高"与逆时针 90° 旋转次数，渲染端照此 letterbox。
+    //AVRational sar = videoStream->sample_aspect_ratio;//直接读字段，可能是 0/1（未知），没有任何兜底
+    AVRational sar = av_guess_sample_aspect_ratio(p_formatCtx, videoStream, nullptr);//先取 stream->sample_aspect_ratio，如果无效（num 或 den 为 0），再退回去看 stream->codecpar->sample_aspect_ratio，最后还可能结合 format 上下文做推断；如果都拿不到，返回 0/1 表示"不知道"
+    //sar = av_guess_sample_aspect_ratio(p_formatCtx, videoStream, frame);//再叠加 frame 级别的 SAR（由解码器从码流 VUI 里解析出来的）,由于我们这里解封装不像涉及到解码，就不使用这个了，减少耦合度
+    if(sar.num <= 0 || sar.den <= 0)
+        sar = (AVRational){1, 1}; //如果存在问题，直接设置1：1
+
+    double dw = v_width * r2d(sar);
+    double dh = v_height;
+    //获取旋转次数
+    v_rotate = (streamRotateCCWDegrees(videoStream)/90) % 4;
+    //90或270度显示宽高互换
+    if(v_rotate == 1 || v_rotate == 3){
+        double t = dw;
+        dw = dh;
+        dh = t;
+    }
+    //赋值給全局变量
+    v_turnWidth = dw;
+    v_turnHeight = dh;
+    //流级色彩范围兜底
+    v_colorRange = int(videoStream->codecpar->color_range);
+    v_is709 = (videoStream->codecpar->color_trc == AVCOL_TRC_BT709 ||
+               videoStream->codecpar->color_space == AVCOL_SPC_BT709 ||
+               videoStream->codecpar->color_trc == AVCOL_TRC_IEC61966_2_1);
+
     mux.unlock();
     //输出一下我们的视频信息
     qDebug()<<"=========video information===========";

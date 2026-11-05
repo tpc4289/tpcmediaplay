@@ -1,11 +1,13 @@
 #ifndef TMEDIAPLAYLIST_H
 #define TMEDIAPLAYLIST_H
 
+#include <QCoreApplication>
 #include <QLabel>
 #include <QListWidgetItem>
 #include <QPropertyAnimation>
 #include <QPushButton>
 #include <QStandardItemModel>
+#include <QTimer>
 
 
 /*
@@ -29,8 +31,8 @@ public:
 
     //把某行标记成“正在播放”（前缀符号+高亮色），row传-1清除所有标记
     void setCurrentPlayingRow(int row);
-    //获取当前正在播放文件的列表行数
-    int currentPlayingRow() const { return m_currentRow; }
+    //获取当前正在播放文件的列表所在行数
+    int currentPlayingRow() const { return m_currentPath.isEmpty() ? -1 : indexOfPath(m_currentPath); }
 
     //向列表批量添加文件（打开文件按钮/拖文件进面板复用）
     void addFiles(const QStringList &files);
@@ -83,10 +85,23 @@ private:
     QString m_currentPath;
 
 
-    void refreshTitle();
+    void refreshTitle(); //刷新播放列表文件数
     void applyPlayingStyle(); //把当前播放行刷成高亮文本
     void moveCurrentRow(int delta); //当前选中行上移(-1)/下移(+1)，take+insert 真实移动整行
 
+    //====== 播放列表 JSON 持久化：启动自动恢复，变更自动保存 ======
+    QTimer *saveTimer = nullptr; //防抖：变更后 400ms 合并写一次盘
+    bool m_loading = false;        //启动恢复期间抑制回写，避免刚加载又保存
+    //存档位置：exe 同目录 playlist.json。
+    static QString jsonFilePath() {
+        return QCoreApplication::applicationDirPath() + "/playlist.json";
+    }
+    //程序启动加载播放列表文件
+    bool loadFromJsonFile();
+    //保存播放列表到本地文件
+    bool saveToJsonFile();
+    //请求防抖保存
+    void scheduleSave();
 
 
     enum ItemRole{

@@ -26,6 +26,10 @@ private:
     QOpenGLShaderProgram program;
     //shader 中 y/u/v sampler 的位置
     GLuint unis[3] = {0, 0, 0};
+    //色彩范围 uniform（1=full 0-255，0=limited 16-235）
+    //色彩 uniform：范围（full/limited）与空间（BT.601/BT.709），四种组合选系数
+    int uniFullRange = -1;
+    int uniColorSpace = -1;
     //opengl 纹理 id
     GLuint texs[3] = {0, 0, 0};
 
@@ -52,6 +56,22 @@ private:
     int texHeigth = 0;
     bool texReady = false;
 
+    //====== 显示几何/色彩状态（由送显帧携带，SAR+旋转+色彩范围修复新增） ======
+    //显示宽高比（0 表示未知，按存储比例）
+    double curAspect = 0;
+    //逆时针 90° 旋转次数 0-3
+    double curRotate = 0;
+    //帧色彩范围：full(0-255)/limited(16-235)
+    bool curFullRange = true;
+    //帧色彩空间：true=BT.709，false=BT.601
+    bool curIs709 = false;
+    //旋转变化后需重传顶点缓冲
+    bool vboDirty = true;
+    int loaderRotate = -1;
+
+    //按旋转次数重排 4 顶点的 uv（纹素坐标）
+    void updateUvCoords(int rotQ);
+
     QMutex mux;
 
 
@@ -61,7 +81,7 @@ private:
 
 public slots:
     //队列连接槽（主线程执行）：拷贝 YUV 数据并请求重绘
-    void slotRepaint(QByteArray yuv, int width, int height);
+    void slotRepaint(QByteArray yuv, int width, int height, double dispAspect, int vRotate, bool fullRange, bool is709);
 
 
 };
